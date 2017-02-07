@@ -92,7 +92,18 @@ int main(void) {
 	int b = hw_i2c_register_read(0xFF);
 
 	int c = hw_i2c_register_read(0x0a);
-	hw_i2c_register_write(0x0A, c+1);
+
+	// Mode
+	hw_i2c_register_write(0x9, 3);
+	i2c_delay();
+
+	hw_i2c_register_write(0xa, 0);
+	i2c_delay();
+
+	hw_i2c_register_write(0xc, 0x80);
+	i2c_delay();
+
+	hw_i2c_register_write(0xd, 0x80);
 	i2c_delay();
 	int d = hw_i2c_register_read(0x0a);
 
