@@ -84,37 +84,17 @@ int main(void) {
 	//
 	Chip_GPIO_Init(LPC_GPIO_PORT);
 
-/*
-	Chip_GPIO_SetPinDIROutput(LPC_GPIO_PORT, 0, PIN_I2C_SCL);
-	Chip_GPIO_SetPinDIROutput(LPC_GPIO_PORT, 0, PIN_I2C_SDA);
-
-	Chip_GPIO_SetPinState(LPC_GPIO_PORT, 0, PIN_I2C_SCL, false);
-	Chip_GPIO_SetPinState(LPC_GPIO_PORT, 0, PIN_I2C_SCL, true);
-	Chip_GPIO_SetPinState(LPC_GPIO_PORT, 0, PIN_I2C_SCL, false);
-	Chip_GPIO_SetPinState(LPC_GPIO_PORT, 0, PIN_I2C_SCL, true);
-
-	Chip_GPIO_SetPinState(LPC_GPIO_PORT, 0, PIN_I2C_SDA, false);
-	Chip_GPIO_SetPinState(LPC_GPIO_PORT, 0, PIN_I2C_SDA, true);
-	Chip_GPIO_SetPinState(LPC_GPIO_PORT, 0, PIN_I2C_SDA, false);
-	Chip_GPIO_SetPinState(LPC_GPIO_PORT, 0, PIN_I2C_SDA, true);
-*/
-
-	// Experimental I2C MAX30102
-	//i2c_setup(PIN_I2C_SCL, PIN_I2C_SDA);
 	hw_i2c_setup();
 
-	/*
-	int rev,id,val0,val1;
-	rev = max30102_register_read(0xfe);
-	id = max30102_register_read(0xff);
-	rev = max30102_register_read(0xfe);
-	val0 = max30102_register_read(0x0a);
-	max30102_register_write(0xa, 0xFD);
-	val1 = max30102_register_read(0x0a);
-*/
 
-	hw_i2c_read(0xAE,0xFE,1,1);
 
+	int a = hw_i2c_register_read(0xFE);
+	int b = hw_i2c_register_read(0xFF);
+
+	int c = hw_i2c_register_read(0x0a);
+	hw_i2c_register_write(0x0A, c+1);
+	i2c_delay();
+	int d = hw_i2c_register_read(0x0a);
 
     while(1) {
         i++ ;

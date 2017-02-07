@@ -35,11 +35,11 @@ void hw_i2c_setup (void) {
 
 
 
-void hw_i2c_read(int i2c_addr, int reg_addr, int len, int d) {
+int hw_i2c_register_read(int reg_addr) {
 
 	I2CM_XFER_T  i2cmXferRec;
 
-	uint8_t sendData[4] = {0xff,0,0,0};
+	uint8_t sendData[4] = {reg_addr,0,0,0};
 	uint8_t recvData[4] = {0,0,0,0};
 
 
@@ -53,33 +53,25 @@ void hw_i2c_read(int i2c_addr, int reg_addr, int len, int d) {
 
 	Chip_I2CM_XferBlocking(LPC_I2C, &i2cmXferRec);
 
-	while (1) {
-
-	}
+	return recvData[0];
 }
 
-#ifdef FALSE
-void i2c_hw_write(int i2c_addr, int reg_addr, int len, int d) {
-	uint8_t recvData[10];
-	I2C_PARAM_T param;
-	I2C_RESULT_T result;
+void hw_i2c_register_write(int reg_addr, int value) {
 
-	recvData[0] = i2c_addr;
-	recvData[1] = reg_addr;
+	I2CM_XFER_T  i2cmXferRec;
 
-	/* Setup I2C parameters for number of bytes with stop - appears as follows on bus:
-	   Start - address7 or address10upper - ack
-	   (10 bits addressing only) address10lower - ack
-	   value 1 (read) - ack
-	   value 2 read) - ack - stop */
-	param.num_bytes_send    = 0;
-	param.num_bytes_rec     = 2;
-	param.buffer_ptr_rec    = &recvData[0];
-	param.stop_flag         = 1;
+	uint8_t sendData[4] = {reg_addr,value,0,0};
+	uint8_t recvData[4] = {0,0,0,0};
 
 
-	/* Do master read transfer */
-	int error_code = LPC_I2CD_API->i2c_master_receive_poll(i2cHandleMaster, &param, &result);
+	/* Setup I2C transfer record */
+	i2cmXferRec.slaveAddr = 0xAE >> 1;
+	i2cmXferRec.status = 0;
+	i2cmXferRec.txSz = 2;
+	i2cmXferRec.rxSz = 0;
+	i2cmXferRec.txBuff = &sendData[0];
+	i2cmXferRec.rxBuff = &recvData[0];
+
+	Chip_I2CM_XferBlocking(LPC_I2C, &i2cmXferRec);
+
 }
-#endif
-
