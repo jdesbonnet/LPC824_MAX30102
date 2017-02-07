@@ -139,22 +139,24 @@ int main(void) {
 	hw_i2c_register_write(0x9, 1<<6);
 	i2c_delay();
 
-	hw_i2c_register_write(0x8, 1<<4);
+	//hw_i2c_register_write(0x8,  1<<4);
+	hw_i2c_register_write(0x8, (8<<5) | 1<<4);
+
 	i2c_delay();
 
 	// Mode
 	hw_i2c_register_write(0x9, 3);
 	i2c_delay();
 
-	hw_i2c_register_write(0xa, (2<<2) | (3<<0) );
+	hw_i2c_register_write(0xa, (2<<5) | (2<<2) | (3<<0) );
 	i2c_delay();
 
 	// LED power
-	hw_i2c_register_write(0xc, 0x80);
+	hw_i2c_register_write(0xc, 0x20);
 	i2c_delay();
 
 	// LED power
-	hw_i2c_register_write(0xd, 0x80);
+	hw_i2c_register_write(0xd, 0x20);
 	i2c_delay();
 
 	uint8_t v0,v1,v2;
