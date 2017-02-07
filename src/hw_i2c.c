@@ -56,6 +56,22 @@ int hw_i2c_register_read(int reg_addr) {
 	return recvData[0];
 }
 
+int hw_i2c_fifo_read(uint8_t *buf, int len) {
+
+	I2CM_XFER_T  i2cmXferRec;
+
+	uint8_t sendData[4] = {0x7,0,0,0};
+
+	/* Setup I2C transfer record */
+	i2cmXferRec.slaveAddr = 0xAE >> 1;
+	i2cmXferRec.status = 0;
+	i2cmXferRec.txSz = 1;
+	i2cmXferRec.rxSz = len;
+	i2cmXferRec.txBuff = &sendData[0];
+	i2cmXferRec.rxBuff = buf;
+
+	Chip_I2CM_XferBlocking(LPC_I2C, &i2cmXferRec);
+}
 void hw_i2c_register_write(int reg_addr, int value) {
 
 	I2CM_XFER_T  i2cmXferRec;

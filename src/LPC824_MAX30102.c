@@ -41,6 +41,55 @@
 /* 100kbps I2C bit-rate */
 #define I2C_BITRATE             (100000)
 
+/**
+ * @brief Send one byte to UART. Block if UART busy.
+ * @param n Byte to send to UART.
+ * @return None.
+ */
+static void print_byte (uint8_t n) {
+	//Chip_UART_SendBlocking(LPC_USART0, &n, 1);
+
+	// Wait until data can be written to FIFO (TXRDY==1)
+	while ( (Chip_UART_GetStatus(LPC_USART0) & UART_STAT_TXRDY) == 0) {}
+
+	Chip_UART_SendByte(LPC_USART0, n);
+}
+
+/**
+ * @brief Print a signed integer in decimal radix.
+ * @param n Number to print.
+ * @return None.
+ */
+static void print_decimal (int n) {
+	char buf[10];
+	int i = 0;
+
+	// Special case of n==0
+	if (n == 0) {
+		print_byte('0');
+		return;
+	}
+
+	// Handle negative numbers
+	if (n < 0) {
+		print_byte('-');
+		n = -n;
+	}
+
+	// Use modulo 10 to get least significant digit.
+	// Then /10 to shift digits right and get next least significant digit.
+	while (n > 0) {
+		buf[i++] = '0' + n%10;
+		n /= 10;
+	}
+
+	// Output digits in reverse order
+	do {
+		print_byte (buf[--i]);
+	} while (i>0);
+
+}
+
 
 int main(void) {
 
@@ -82,33 +131,69 @@ int main(void) {
 	//
 	// Initialize GPIO
 	//
-	Chip_GPIO_Init(LPC_GPIO_PORT);
+	//Chip_GPIO_Init(LPC_GPIO_PORT);
 
 	hw_i2c_setup();
 
+	// Reset
+	hw_i2c_register_write(0x9, 1<<6);
+	i2c_delay();
 
-
-	int a = hw_i2c_register_read(0xFE);
-	int b = hw_i2c_register_read(0xFF);
-
-	int c = hw_i2c_register_read(0x0a);
+	hw_i2c_register_write(0x8, 1<<4);
+	i2c_delay();
 
 	// Mode
 	hw_i2c_register_write(0x9, 3);
 	i2c_delay();
 
-	hw_i2c_register_write(0xa, 0);
+	hw_i2c_register_write(0xa, (2<<2) | (3<<0) );
 	i2c_delay();
 
+	// LED power
 	hw_i2c_register_write(0xc, 0x80);
 	i2c_delay();
 
+	// LED power
 	hw_i2c_register_write(0xd, 0x80);
 	i2c_delay();
-	int d = hw_i2c_register_read(0x0a);
+
+	uint8_t v0,v1,v2;
+	uint8_t fifo_read_ptr =  hw_i2c_register_read(0x6);
+	uint8_t fifo_write_ptr;
+	uint8_t nsamples;
+	uint32_t vred,vir;
+
+	uint8_t buf[6];
 
     while(1) {
-        i++ ;
+    	// Get FIFO write pointer
+    	fifo_write_ptr = hw_i2c_register_read(0x4);
+    	i2c_delay();
+
+    	nsamples = fifo_write_ptr - fifo_read_ptr;
+
+    	for (i = 0; i < nsamples; i++) {
+
+    		hw_i2c_fifo_read(buf,6);
+    		/*
+    		v0 = hw_i2c_register_read(0x7);
+    		v1 = hw_i2c_register_read(0x7);
+    		v2 = hw_i2c_register_read(0x7);
+    		vred = (v0 << 16) | (v1 << 8) | v2;
+    		v0 = hw_i2c_register_read(0x7);
+    		v1 = hw_i2c_register_read(0x7);
+    		v2 = hw_i2c_register_read(0x7);
+    		vir = (v0 << 16) | (v1 << 8) | v2;
+			*/
+    		vred = (buf[0]<<16) | (buf[1]<<8) | buf[2];
+    		vir = (buf[3]<<16) | (buf[4]<<8) | buf[5];
+    		print_decimal(vred);
+    		print_byte(' ');
+    		print_decimal(vir);
+    		print_byte('\r');
+    		print_byte('\n');
+    		fifo_read_ptr++;
+    	}
     }
     return 0 ;
 }
