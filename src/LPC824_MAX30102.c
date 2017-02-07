@@ -90,6 +90,26 @@ static void print_decimal (int n) {
 
 }
 
+void setup_sct_for_timer (void) {
+
+	//
+	// Setup SCT to trigger ADC sampling. Configure a square wave with sampling frequency, 50% duty cycle.
+	//
+
+	Chip_SCT_Init(LPC_SCT);
+
+	/* Stop the SCT before configuration */
+	Chip_SCTPWM_Stop(LPC_SCT);
+
+	// Match/capture mode register. (ref UM10800 section 16.6.11, Table 232, page 273)
+	// Determines if match/capture operate as match or capture. Want all match.
+	LPC_SCT->REGMODE_U = 0;
+
+	// Set SCT Counter to count 32-bits and reset to 0 after reaching MATCH0
+	Chip_SCT_Config(LPC_SCT, SCT_CONFIG_32BIT_COUNTER );
+
+	Chip_SCT_ClearControl(LPC_SCT, SCT_CTRL_HALT_L | SCT_CTRL_HALT_H);
+}
 
 int main(void) {
 
@@ -133,6 +153,8 @@ int main(void) {
 	//
 	//Chip_GPIO_Init(LPC_GPIO_PORT);
 
+	setup_sct_for_timer();
+
 	hw_i2c_setup();
 
 	// Reset
@@ -152,11 +174,11 @@ int main(void) {
 	i2c_delay();
 
 	// LED power
-	hw_i2c_register_write(0xc, 0x20);
+	hw_i2c_register_write(0xc, 0x40);
 	i2c_delay();
 
 	// LED power
-	hw_i2c_register_write(0xd, 0x20);
+	hw_i2c_register_write(0xd, 0x40);
 	i2c_delay();
 
 	uint8_t v0,v1,v2;
@@ -189,6 +211,8 @@ int main(void) {
 			*/
     		vred = (buf[0]<<16) | (buf[1]<<8) | buf[2];
     		vir = (buf[3]<<16) | (buf[4]<<8) | buf[5];
+    		print_decimal(LPC_SCT->COUNT_U);
+    		print_byte(' ');
     		print_decimal(vred);
     		print_byte(' ');
     		print_decimal(vir);
