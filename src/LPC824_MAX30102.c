@@ -92,10 +92,6 @@ static void print_decimal (int n) {
 
 void setup_sct_for_timer (void) {
 
-	//
-	// Setup SCT to trigger ADC sampling. Configure a square wave with sampling frequency, 50% duty cycle.
-	//
-
 	Chip_SCT_Init(LPC_SCT);
 
 	/* Stop the SCT before configuration */
@@ -170,22 +166,26 @@ int main(void) {
 	hw_i2c_register_write(0x9, 3);
 	i2c_delay();
 
-	hw_i2c_register_write(0xa, (2<<5) | (2<<2) | (3<<0) );
+	hw_i2c_register_write(0xa, (2<<5)
+			| (0<<2) // sample rate: 0 = 50sps; 1 = 100sps; 2 = 200sps
+			| (3<<0) );
 	i2c_delay();
 
 	// LED power
-	hw_i2c_register_write(0xc, 0x40);
+	hw_i2c_register_write(0xc, 0x80);
 	i2c_delay();
 
 	// LED power
-	hw_i2c_register_write(0xd, 0x40);
+	hw_i2c_register_write(0xd, 0x80);
 	i2c_delay();
 
 	uint8_t v0,v1,v2;
 	uint8_t fifo_read_ptr =  hw_i2c_register_read(0x6);
 	uint8_t fifo_write_ptr;
+	uint8_t last_fifo_write_ptr=0;
 	uint8_t nsamples;
 	uint32_t vred,vir;
+	uint32_t ts, prev_ts=0;
 
 	uint8_t buf[6];
 
@@ -194,31 +194,29 @@ int main(void) {
     	fifo_write_ptr = hw_i2c_register_read(0x4);
     	i2c_delay();
 
-    	nsamples = fifo_write_ptr - fifo_read_ptr;
+    	//nsamples = fifo_write_ptr - fifo_read_ptr;
 
-    	for (i = 0; i < nsamples; i++) {
+    	//for (i = 0; i < nsamples; i++) {
+    	if (fifo_write_ptr != last_fifo_write_ptr) {
+    		ts = LPC_SCT->COUNT_U;
 
     		hw_i2c_fifo_read(buf,6);
-    		/*
-    		v0 = hw_i2c_register_read(0x7);
-    		v1 = hw_i2c_register_read(0x7);
-    		v2 = hw_i2c_register_read(0x7);
-    		vred = (v0 << 16) | (v1 << 8) | v2;
-    		v0 = hw_i2c_register_read(0x7);
-    		v1 = hw_i2c_register_read(0x7);
-    		v2 = hw_i2c_register_read(0x7);
-    		vir = (v0 << 16) | (v1 << 8) | v2;
-			*/
     		vred = (buf[0]<<16) | (buf[1]<<8) | buf[2];
     		vir = (buf[3]<<16) | (buf[4]<<8) | buf[5];
-    		print_decimal(LPC_SCT->COUNT_U);
+    		print_decimal(ts);
     		print_byte(' ');
+    		//print_decimal(nsamples);
+    		//print_byte(' ');
+    		//print_decimal(fifo_write_ptr);
+    		//print_byte(' ');
     		print_decimal(vred);
     		print_byte(' ');
     		print_decimal(vir);
     		print_byte('\r');
     		print_byte('\n');
     		fifo_read_ptr++;
+    		prev_ts = ts;
+    		last_fifo_write_ptr = fifo_write_ptr;
     	}
     }
     return 0 ;
