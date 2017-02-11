@@ -33,6 +33,7 @@
 #define PIN_UART_TXD 4
 // General purpose debug pin
 #define PIN_DEBUG 14
+#define PIN_INT 13
 
 
 #define PIN_I2C_SCL 10
@@ -123,6 +124,13 @@ int main(void) {
 
     int i;
 
+    //
+    // Initialize GPIO
+    //
+	Chip_GPIO_Init(LPC_GPIO_PORT);
+	Chip_GPIO_SetPinDIRInput(LPC_GPIO_PORT, 0, PIN_INT);
+	Chip_IOCON_PinSetMode(LPC_IOCON,PIN_INT,PIN_MODE_PULLUP);
+
 	//
 	// Initialize UART
 	//
@@ -155,44 +163,56 @@ int main(void) {
 
 	// Reset
 	hw_i2c_register_write(0x9, 1<<6);
-	i2c_delay();
+	hw_i2c_register_write(0x9, 1<<6);
 
+	// Interrupt Enable 1 Register. Set PPG_RDY_EN (data available in FIFO)
+	hw_i2c_register_write(0x2, 1<<6);
+
+	// FIFO configuration register
+	// SMP_AVE: 16 samples averaged per FIFO sample
+	// FIFO_ROLLOVER_EN=1
 	//hw_i2c_register_write(0x8,  1<<4);
-	hw_i2c_register_write(0x8, (8<<5) | 1<<4);
+	hw_i2c_register_write(0x8, (0<<5) | 1<<4);
 
-	i2c_delay();
-
-	// Mode
+	// Mode Configuration Register
+	// SPO2 mode
 	hw_i2c_register_write(0x9, 3);
-	i2c_delay();
 
-	hw_i2c_register_write(0xa, (2<<5)
+	// SPO2 Configuration Register
+	hw_i2c_register_write(0xa,
+			(3<<5)  // SPO2_ADC_RGE 2 = full scale 8192 nA (LSB size 31.25pA); 3 = 16384nA
 			| (0<<2) // sample rate: 0 = 50sps; 1 = 100sps; 2 = 200sps
-			| (3<<0) );
-	i2c_delay();
+			| (3<<0) // LED_PW 3 = 411µs, ADC resolution 18 bits
+	);
 
-	// LED power
-	hw_i2c_register_write(0xc, 0x80);
-	i2c_delay();
+	// LED1 (red) power (0 = 0mA; 255 = 50mA)
+	hw_i2c_register_write(0xc, 0xa0);
 
-	// LED power
-	hw_i2c_register_write(0xd, 0x80);
-	i2c_delay();
+	// LED (IR) power
+	hw_i2c_register_write(0xd, 0xa0);
 
 	uint8_t v0,v1,v2;
 	uint8_t fifo_read_ptr =  hw_i2c_register_read(0x6);
 	uint8_t fifo_write_ptr;
+	uint8_t intreg;
 	uint8_t last_fifo_write_ptr=0;
 	uint8_t nsamples;
-	uint32_t vred,vir;
+	uint32_t v_red,v_ir;
 	uint32_t ts, prev_ts=0;
+
+	int32_t lpf_red=0, lpf_ir=0;
+
+	int npoll;
 
 	uint8_t buf[6];
 
     while(1) {
     	// Get FIFO write pointer
     	fifo_write_ptr = hw_i2c_register_read(0x4);
-    	i2c_delay();
+    	//i2c_delay();
+
+    	// Read interrupt register
+    	intreg = hw_i2c_register_read(0x0);
 
     	//nsamples = fifo_write_ptr - fifo_read_ptr;
 
@@ -201,22 +221,42 @@ int main(void) {
     		ts = LPC_SCT->COUNT_U;
 
     		hw_i2c_fifo_read(buf,6);
-    		vred = (buf[0]<<16) | (buf[1]<<8) | buf[2];
-    		vir = (buf[3]<<16) | (buf[4]<<8) | buf[5];
+    		v_red = (buf[0]<<16) | (buf[1]<<8) | buf[2];
+    		v_ir = (buf[3]<<16) | (buf[4]<<8) | buf[5];
+
+    		lpf_red = 15*lpf_red;
+    		lpf_red += v_red;
+    		lpf_red /= 16;
+
+    		lpf_ir = 15*lpf_ir;
+    		lpf_ir += v_ir;
+    		lpf_ir /= 16;
+
     		print_decimal(ts);
     		print_byte(' ');
     		//print_decimal(nsamples);
     		//print_byte(' ');
     		//print_decimal(fifo_write_ptr);
     		//print_byte(' ');
-    		print_decimal(vred);
+    		print_decimal(v_red);
     		print_byte(' ');
-    		print_decimal(vir);
+    		print_decimal(v_ir);
+    		print_byte(' ');
+
+    		print_decimal(v_red - lpf_red);
+    		print_byte(' ');
+    		print_decimal(v_ir - lpf_ir);
+    		print_byte(' ');
+
+    		print_decimal(npoll);
     		print_byte('\r');
     		print_byte('\n');
     		fifo_read_ptr++;
     		prev_ts = ts;
     		last_fifo_write_ptr = fifo_write_ptr;
+    		npoll=0;
+    	} else {
+    		npoll++;
     	}
     }
     return 0 ;
