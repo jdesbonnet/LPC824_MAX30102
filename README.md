@@ -33,3 +33,11 @@ Datasheets:
 
 http://www.mikrocontroller.net/attachment/193855/LM6206N3.pdf
 http://www.s-manuals.com/pdf/datasheet/2/n/2n7002dw_panjit.pdf
+https://datasheets.maximintegrated.com/en/ds/MAX30102.pdf
+
+Papers:
+
+[An Automatic Beat Detection Algorithm
+for Pressure Signals](./doc/BeatDetection.pdf)
+
+
