@@ -8,21 +8,22 @@
 
 
 /* 100kbps I2C bit-rate */
-#define I2C_BITRATE             (10000)
+#define I2C_BITRATE             (40000)
 
-#define I2C_CLK_DIVIDER         (40)
+#define I2C_CLK_DIVIDER         (8)
 
 void hw_i2c_setup (void) {
+
+	// Enable I2C0 fixed location pins
 	Chip_Clock_EnablePeriphClock(SYSCTL_CLOCK_SWM);
 	Chip_SWM_EnableFixedPin(SWM_FIXED_I2C0_SCL);
 	Chip_SWM_EnableFixedPin(SWM_FIXED_I2C0_SDA);
 	Chip_Clock_DisablePeriphClock(SYSCTL_CLOCK_SWM);
 
-	/* Enable I2C clock and reset I2C peripheral - the boot ROM does not
-	   do this */
+	// Enable I2C clock and reset I2C peripheral
 	Chip_I2C_Init(LPC_I2C);
 
-	/* Setup clock rate for I2C */
+	// Setup clock rate for I2C
 	Chip_I2C_SetClockDiv(LPC_I2C, I2C_CLK_DIVIDER);
 
 	/* Setup I2CM transfer rate */
@@ -89,5 +90,7 @@ void hw_i2c_register_write(int reg_addr, int value) {
 	i2cmXferRec.rxBuff = &recvData[0];
 
 	Chip_I2CM_XferBlocking(LPC_I2C, &i2cmXferRec);
+
+	i2c_delay();
 
 }

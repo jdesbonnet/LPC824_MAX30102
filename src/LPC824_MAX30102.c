@@ -42,6 +42,8 @@
 /* 100kbps I2C bit-rate */
 #define I2C_BITRATE             (100000)
 
+static volatile uint8_t data_available_flag=0;
+
 /**
  * @brief Send one byte to UART. Block if UART busy.
  * @param n Byte to send to UART.
@@ -91,6 +93,35 @@ static void print_decimal (int n) {
 
 }
 
+/**
+ * @brief Print uint32 integer in decimal radix.
+ * @param n Number to print.
+ * @return None.
+ */
+static void print_decimal_uint32 (uint32_t n) {
+	char buf[10];
+	int i = 0;
+
+	// Special case of n==0
+	if (n == 0) {
+		print_byte('0');
+		return;
+	}
+
+	// Use modulo 10 to get least significant digit.
+	// Then /10 to shift digits right and get next least significant digit.
+	while (n > 0) {
+		buf[i++] = '0' + n%10;
+		n /= 10;
+	}
+
+	// Output digits in reverse order
+	do {
+		print_byte (buf[--i]);
+	} while (i>0);
+
+}
+
 void setup_sct_for_timer (void) {
 
 	Chip_SCT_Init(LPC_SCT);
@@ -106,6 +137,16 @@ void setup_sct_for_timer (void) {
 	Chip_SCT_Config(LPC_SCT, SCT_CONFIG_32BIT_COUNTER );
 
 	Chip_SCT_ClearControl(LPC_SCT, SCT_CTRL_HALT_L | SCT_CTRL_HALT_H);
+}
+
+/**
+ * @brief	Handle interrupt from PININT7
+ * @return	Nothing
+ */
+void PININT7_IRQHandler(void)
+{
+	data_available_flag=1;
+	Chip_PININT_ClearIntStatus(LPC_PININT, PININTCH7);
 }
 
 int main(void) {
@@ -130,6 +171,20 @@ int main(void) {
 	Chip_GPIO_Init(LPC_GPIO_PORT);
 	Chip_GPIO_SetPinDIRInput(LPC_GPIO_PORT, 0, PIN_INT);
 	Chip_IOCON_PinSetMode(LPC_IOCON,PIN_INT,PIN_MODE_PULLUP);
+
+	/* Configure interrupt channel 7 for the GPIO pin in SysCon block */
+	Chip_SYSCTL_SetPinInterrupt(7, PIN_INT);
+
+	/* Configure GPIO pin as input pin */
+	Chip_GPIO_SetPinDIRInput(LPC_GPIO_PORT, 0, PIN_INT);
+
+	/* Configure channel 7 interrupt as edge sensitive and falling edge interrupt */
+	Chip_PININT_SetPinModeEdge(LPC_PININT, PININTCH7);
+	Chip_PININT_EnableIntLow(LPC_PININT, PININTCH7);
+
+	/* Enable interrupt in the NVIC */
+	NVIC_EnableIRQ(PININT7_IRQn);
+
 
 	//
 	// Initialize UART
@@ -181,12 +236,12 @@ int main(void) {
 	// SPO2 Configuration Register
 	hw_i2c_register_write(0xa,
 			(3<<5)  // SPO2_ADC_RGE 2 = full scale 8192 nA (LSB size 31.25pA); 3 = 16384nA
-			| (0<<2) // sample rate: 0 = 50sps; 1 = 100sps; 2 = 200sps
+			| (1<<2) // sample rate: 0 = 50sps; 1 = 100sps; 2 = 200sps
 			| (3<<0) // LED_PW 3 = 411µs, ADC resolution 18 bits
 	);
 
 	// LED1 (red) power (0 = 0mA; 255 = 50mA)
-	hw_i2c_register_write(0xc, 0xa0);
+	hw_i2c_register_write(0xc, 0xb0);
 
 	// LED (IR) power
 	hw_i2c_register_write(0xd, 0xa0);
@@ -207,12 +262,20 @@ int main(void) {
 	uint8_t buf[6];
 
     while(1) {
-    	// Get FIFO write pointer
-    	fifo_write_ptr = hw_i2c_register_read(0x4);
-    	//i2c_delay();
+
+    	while (!data_available_flag) {
+    		__WFI();
+    	}
+
+    	data_available_flag = 0;
 
     	// Read interrupt register
     	intreg = hw_i2c_register_read(0x0);
+
+    	// Get FIFO write pointer
+    	fifo_write_ptr = hw_i2c_register_read(0x4);
+
+
 
     	//nsamples = fifo_write_ptr - fifo_read_ptr;
 
@@ -232,7 +295,7 @@ int main(void) {
     		lpf_ir += v_ir;
     		lpf_ir /= 16;
 
-    		print_decimal(ts);
+    		print_decimal_uint32(ts);
     		print_byte(' ');
     		//print_decimal(nsamples);
     		//print_byte(' ');
