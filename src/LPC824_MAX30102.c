@@ -44,6 +44,10 @@
 
 static volatile uint8_t data_available_flag=0;
 
+#define FILTER_TAP_NUM 73
+
+extern int filter_taps[FILTER_TAP_NUM];
+
 /**
  * @brief Send one byte to UART. Block if UART busy.
  * @param n Byte to send to UART.
@@ -256,6 +260,8 @@ int main(void) {
 	uint32_t ts, prev_ts=0;
 
 	int32_t lpf_red=0, lpf_ir=0;
+	int32_t a_red[FILTER_TAP_NUM], a_ir[FILTER_TAP_NUM];
+	int32_t sum_red, sum_ir;
 
 	int npoll;
 
@@ -263,6 +269,7 @@ int main(void) {
 
     while(1) {
 
+    	// Wait for data-available interrupt
     	while (!data_available_flag) {
     		__WFI();
     	}
@@ -287,13 +294,25 @@ int main(void) {
     		v_red = (buf[0]<<16) | (buf[1]<<8) | buf[2];
     		v_ir = (buf[3]<<16) | (buf[4]<<8) | buf[5];
 
-    		lpf_red = 15*lpf_red;
-    		lpf_red += v_red;
-    		lpf_red /= 16;
+    		lpf_red = (v_red + 15*lpf_red)/16;
+    		lpf_ir = (v_ir + 15*lpf_ir)/16;
 
-    		lpf_ir = 15*lpf_ir;
-    		lpf_ir += v_ir;
-    		lpf_ir /= 16;
+
+            for (i = 1; i < FILTER_TAP_NUM; i++) {
+                    a_red[i-1] = a_red[i];
+                    a_ir[i-1] = a_ir[i];
+            }
+            a_red[FILTER_TAP_NUM-1] = v_red - lpf_red;
+            a_ir[FILTER_TAP_NUM-1] = v_ir - lpf_ir;
+
+            sum_red = 0;
+            sum_ir = 0;
+            for (i = 0; i < FILTER_TAP_NUM; i++) {
+                    sum_red += a_red[i]*filter_taps[i];
+                    sum_ir += a_ir[i]*filter_taps[i];
+            }
+
+
 
     		print_decimal_uint32(ts);
     		print_byte(' ');
@@ -304,14 +323,21 @@ int main(void) {
     		print_decimal(v_red);
     		print_byte(' ');
     		print_decimal(v_ir);
-    		print_byte(' ');
 
+    		print_byte(' ');
     		print_decimal(v_red - lpf_red);
     		print_byte(' ');
     		print_decimal(v_ir - lpf_ir);
-    		print_byte(' ');
 
-    		print_decimal(npoll);
+    		print_byte(' ');
+    		print_decimal(sum_red);
+
+    		print_byte(' ');
+    		print_decimal(sum_ir);
+
+    		//print_byte(' ');
+    		//print_decimal(npoll);
+
     		print_byte('\r');
     		print_byte('\n');
     		fifo_read_ptr++;
