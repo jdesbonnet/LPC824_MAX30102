@@ -1,5 +1,6 @@
 /** 
- * FFT waterfall plot
+ * FFT waterfall plot. Pass size of FFT as parameter eg ./fft 250.
+ * Data is read from stdin.
  */
 
 #include <stdio.h>
