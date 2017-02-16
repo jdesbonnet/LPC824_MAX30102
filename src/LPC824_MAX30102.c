@@ -39,6 +39,8 @@
 #define PIN_I2C_SCL 10
 #define PIN_I2C_SDA 13
 
+#define PIN_LED 12
+
 /* 100kbps I2C bit-rate */
 #define I2C_BITRATE             (100000)
 
@@ -186,6 +188,8 @@ int main(void) {
 	Chip_PININT_SetPinModeEdge(LPC_PININT, PININTCH7);
 	Chip_PININT_EnableIntLow(LPC_PININT, PININTCH7);
 
+	Chip_GPIO_SetPinDIROutput(LPC_GPIO_PORT, 0, PIN_LED);
+
 	/* Enable interrupt in the NVIC */
 	NVIC_EnableIRQ(PININT7_IRQn);
 
@@ -255,7 +259,9 @@ int main(void) {
 	uint8_t fifo_write_ptr;
 	uint8_t intreg;
 	uint8_t pulse=0;
+	uint8_t led_on=0;
 	uint8_t last_fifo_write_ptr=0;
+
 	uint32_t v_red,v_ir;
 	uint32_t ts, prev_ts=0;
 
@@ -265,6 +271,7 @@ int main(void) {
 	int32_t sum_red, sum_ir, prev_sum_red, prev_sum_ir;
 
 	uint32_t sample_counter=0;
+	uint32_t led_off_time;
 
 	uint8_t buf[6];
 
@@ -307,8 +314,12 @@ int main(void) {
                     sum_ir += a_ir[i]*filter_taps[i];
             }
 
+            // Look for positive to negative crossing.
             if ( (prev_sum_ir) > 0 && (sum_ir < 0) ) {
             	pulse = 1;
+            	led_on = 1;
+            	led_off_time = ts + 1000000;
+            	Chip_GPIO_SetPinState(LPC_GPIO_PORT,0,PIN_LED,true);
             }
 
             prev_sum_red = sum_red;
@@ -345,6 +356,11 @@ int main(void) {
     		sample_counter++;
     		pulse=0;
 
+    	}
+
+    	if (led_on && ts > led_off_time) {
+    		led_on = 0;
+    		Chip_GPIO_SetPinState(LPC_GPIO_PORT,0,PIN_LED,false);
     	}
     }
     return 0 ;
