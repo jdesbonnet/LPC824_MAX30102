@@ -254,16 +254,17 @@ int main(void) {
 	uint8_t fifo_read_ptr =  hw_i2c_register_read(0x6);
 	uint8_t fifo_write_ptr;
 	uint8_t intreg;
+	uint8_t pulse=0;
 	uint8_t last_fifo_write_ptr=0;
-	uint8_t nsamples;
 	uint32_t v_red,v_ir;
 	uint32_t ts, prev_ts=0;
 
 	int32_t lpf_red=0, lpf_ir=0;
-	int32_t a_red[FILTER_TAP_NUM], a_ir[FILTER_TAP_NUM];
-	int32_t sum_red, sum_ir;
 
-	int npoll;
+	int32_t a_red[FILTER_TAP_NUM], a_ir[FILTER_TAP_NUM];
+	int32_t sum_red, sum_ir, prev_sum_red, prev_sum_ir;
+
+	uint32_t sample_counter=0;
 
 	uint8_t buf[6];
 
@@ -273,7 +274,6 @@ int main(void) {
     	while (!data_available_flag) {
     		__WFI();
     	}
-
     	data_available_flag = 0;
 
     	// Read interrupt register
@@ -282,11 +282,6 @@ int main(void) {
     	// Get FIFO write pointer
     	fifo_write_ptr = hw_i2c_register_read(0x4);
 
-
-
-    	//nsamples = fifo_write_ptr - fifo_read_ptr;
-
-    	//for (i = 0; i < nsamples; i++) {
     	if (fifo_write_ptr != last_fifo_write_ptr) {
     		ts = LPC_SCT->COUNT_U;
 
@@ -312,14 +307,17 @@ int main(void) {
                     sum_ir += a_ir[i]*filter_taps[i];
             }
 
+            if ( (prev_sum_ir) > 0 && (sum_ir < 0) ) {
+            	pulse = 1;
+            }
 
+            prev_sum_red = sum_red;
+            prev_sum_ir = sum_ir;
 
-    		print_decimal_uint32(ts);
+            // Timestamp in microseconds (timer clocked by 30MHz clock).
+    		print_decimal_uint32(ts/30);
+
     		print_byte(' ');
-    		//print_decimal(nsamples);
-    		//print_byte(' ');
-    		//print_decimal(fifo_write_ptr);
-    		//print_byte(' ');
     		print_decimal(v_red);
     		print_byte(' ');
     		print_decimal(v_ir);
@@ -335,17 +333,18 @@ int main(void) {
     		print_byte(' ');
     		print_decimal(sum_ir);
 
-    		//print_byte(' ');
-    		//print_decimal(npoll);
+    		print_byte(' ');
+    		print_decimal(pulse);
 
     		print_byte('\r');
     		print_byte('\n');
     		fifo_read_ptr++;
     		prev_ts = ts;
     		last_fifo_write_ptr = fifo_write_ptr;
-    		npoll=0;
-    	} else {
-    		npoll++;
+
+    		sample_counter++;
+    		pulse=0;
+
     	}
     }
     return 0 ;
