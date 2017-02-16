@@ -219,8 +219,9 @@ int main(void) {
 	// Initialize GPIO
 	//
 	//Chip_GPIO_Init(LPC_GPIO_PORT);
-
 	setup_sct_for_timer();
+	uint32_t clock_hz = Chip_Clock_GetSystemClockRate();
+
 
 	hw_i2c_setup();
 
@@ -265,6 +266,10 @@ int main(void) {
 	uint32_t v_red,v_ir;
 	uint32_t ts, prev_ts=0;
 
+	uint32_t last_zero_crossing_time =  LPC_SCT->COUNT_U;
+	uint32_t pulse_period=30000000;
+	uint32_t pulse_bpm=60;
+
 	int32_t lpf_red=0, lpf_ir=0;
 
 	int32_t a_red[FILTER_TAP_NUM], a_ir[FILTER_TAP_NUM];
@@ -290,6 +295,8 @@ int main(void) {
     	fifo_write_ptr = hw_i2c_register_read(0x4);
 
     	if (fifo_write_ptr != last_fifo_write_ptr) {
+
+    		// Clock from SCT counter
     		ts = LPC_SCT->COUNT_U;
 
     		hw_i2c_fifo_read(buf,6);
@@ -298,7 +305,6 @@ int main(void) {
 
     		lpf_red = (v_red + 15*lpf_red)/16;
     		lpf_ir = (v_ir + 15*lpf_ir)/16;
-
 
             for (i = 1; i < FILTER_TAP_NUM; i++) {
                     a_red[i-1] = a_red[i];
@@ -314,12 +320,22 @@ int main(void) {
                     sum_ir += a_ir[i]*filter_taps[i];
             }
 
-            // Look for positive to negative crossing.
-            if ( (prev_sum_ir) > 0 && (sum_ir < 0) ) {
-            	pulse = 1;
-            	led_on = 1;
-            	led_off_time = ts + 1000000;
-            	Chip_GPIO_SetPinState(LPC_GPIO_PORT,0,PIN_LED,true);
+            // Look for positive to negative crossing. Positive to negative
+            // has greater first derivative (ie saw tooth wave form)
+            if ((prev_sum_ir) > 0 && (sum_ir < 0) ) {
+            	// Second test: was last pulse older than pulse_period/2 ?
+            	if ( (ts - last_zero_crossing_time) > (pulse_period/2) ) {
+            		pulse = 1;
+            		int new_pulse_period = ts - last_zero_crossing_time;
+            		if ( (new_pulse_period < 2*clock_hz) && (new_pulse_period > (clock_hz/4))) {
+            			pulse_period = new_pulse_period;
+                		pulse_bpm = (60*clock_hz)/pulse_period;
+                		led_on = 1;
+                		led_off_time = ts + 1000000;
+                		Chip_GPIO_SetPinState(LPC_GPIO_PORT,0,PIN_LED,true);
+            		}
+            		last_zero_crossing_time = ts;
+            	}
             }
 
             prev_sum_red = sum_red;
@@ -343,6 +359,9 @@ int main(void) {
 
     		print_byte(' ');
     		print_decimal(sum_ir);
+
+    		print_byte(' ');
+    		print_decimal(pulse_period/30000);
 
     		print_byte(' ');
     		print_decimal(pulse);
