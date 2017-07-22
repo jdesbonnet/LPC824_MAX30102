@@ -12,6 +12,10 @@
 
 #define I2C_CLK_DIVIDER         (8)
 
+/**
+ * Enable I2C. LPC824 has one fast (1Mbps) I2C on fixed pins (I2C0) and 3 others which
+ * can be assigned to any GPIO pin, but limited to 400kbps max.
+ */
 void hw_i2c_setup (void) {
 
 	// Enable I2C0 fixed location pins

@@ -280,6 +280,9 @@ int main(void) {
 
 	uint8_t buf[6];
 
+	// Note about datarates: LPC824 I2C0 can operate up to 1Mpbs, Other I2C
+	// interfaces are limited to 400kbps. Each sample requires 2 register
+	// reads and 6 bytes of sample data. 64bits x 100sps = 6.4kbps
     while(1) {
 
     	// Wait for data-available interrupt
@@ -340,6 +343,17 @@ int main(void) {
 
             prev_sum_red = sum_red;
             prev_sum_ir = sum_ir;
+
+            // output format:
+            // timestamp (us)
+            // red
+            // nir
+            // red (ac)
+            // ir (ac)
+            // sum_red
+            // sum_nir
+            // pulse_period
+            // pulse
 
             // Timestamp in microseconds (timer clocked by 30MHz clock).
     		print_decimal_uint32(ts/30);
