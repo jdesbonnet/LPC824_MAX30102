@@ -33,11 +33,18 @@
 #define PIN_UART_TXD 4
 // General purpose debug pin
 #define PIN_DEBUG 14
+
 #define PIN_INT 13
+#define PIN_INT0 13
+#define PIN_INT1 13
 
 
 #define PIN_I2C_SCL 10
 #define PIN_I2C_SDA 13
+#define PIN_I2C0_SCL 10
+#define PIN_I2C0_SDA 13
+#define PIN_I2C1_SCL 8
+#define PIN_I2C1_SDA 9
 
 #define PIN_LED 12
 
@@ -128,6 +135,23 @@ static void print_decimal_uint32 (uint32_t n) {
 
 }
 
+void setup_pin_for_interrupt (int interrupt_pin, int interrupt_channel) {
+
+	Chip_GPIO_SetPinDIRInput(LPC_GPIO_PORT, 0, interrupt_pin);
+	Chip_IOCON_PinSetMode(LPC_IOCON,interrupt_pin,PIN_MODE_PULLUP);
+
+	/* Configure interrupt channel for the GPIO pin in SysCon block */
+	Chip_SYSCTL_SetPinInterrupt(interrupt_channel, interrupt_pin);
+
+	/* Configure GPIO pin as input pin */
+	Chip_GPIO_SetPinDIRInput(LPC_GPIO_PORT, 0, interrupt_pin);
+
+	/* Configure channel 7 interrupt as edge sensitive and falling edge interrupt */
+	Chip_PININT_SetPinModeEdge(LPC_PININT, PININTCH(interrupt_channel));
+	Chip_PININT_EnableIntLow(LPC_PININT, PININTCH(interrupt_channel));
+}
+
+
 void setup_sct_for_timer (void) {
 
 	Chip_SCT_Init(LPC_SCT);
@@ -143,6 +167,49 @@ void setup_sct_for_timer (void) {
 	Chip_SCT_Config(LPC_SCT, SCT_CONFIG_32BIT_COUNTER );
 
 	Chip_SCT_ClearControl(LPC_SCT, SCT_CTRL_HALT_L | SCT_CTRL_HALT_H);
+}
+
+setup_max30102 (LPC_I2C_T *i2c) {
+
+	// Reset
+	hw_i2c_register_write(i2c, 0x9, 1<<6);
+	hw_i2c_register_write(i2c, 0x9, 1<<6);
+
+	// Interrupt Enable 1 Register. Set PPG_RDY_EN (data available in FIFO)
+	hw_i2c_register_write(i2c, 0x2, 1<<6);
+
+	// FIFO configuration register
+	// SMP_AVE: 16 samples averaged per FIFO sample
+	// FIFO_ROLLOVER_EN=1
+	//hw_i2c_register_write(0x8,  1<<4);
+	hw_i2c_register_write(i2c, 0x8, (0<<5) | 1<<4);
+
+	// Mode Configuration Register
+	// SPO2 mode
+	hw_i2c_register_write(i2c, 0x9, 3);
+
+	// SPO2 Configuration Register
+	hw_i2c_register_write(i2c, 0xa,
+			(3<<5)  // SPO2_ADC_RGE 2 = full scale 8192 nA (LSB size 31.25pA); 3 = 16384nA
+			| (1<<2) // sample rate: 0 = 50sps; 1 = 100sps; 2 = 200sps
+			| (3<<0) // LED_PW 3 = 411µs, ADC resolution 18 bits
+	);
+
+	// LED1 (red) power (0 = 0mA; 255 = 50mA)
+	hw_i2c_register_write(i2c, 0xc, 0xb0);
+
+	// LED (IR) power
+	hw_i2c_register_write(i2c, 0xd, 0xa0);
+}
+
+/**
+ * @brief	Handle interrupt from PININT7
+ * @return	Nothing
+ */
+void PININT6_IRQHandler(void)
+{
+	data_available_flag=2;
+	Chip_PININT_ClearIntStatus(LPC_PININT, PININTCH6);
 }
 
 /**
@@ -175,23 +242,19 @@ int main(void) {
     // Initialize GPIO
     //
 	Chip_GPIO_Init(LPC_GPIO_PORT);
+
+	// Configure interrupt pins
+
 	Chip_GPIO_SetPinDIRInput(LPC_GPIO_PORT, 0, PIN_INT);
 	Chip_IOCON_PinSetMode(LPC_IOCON,PIN_INT,PIN_MODE_PULLUP);
 
-	/* Configure interrupt channel 7 for the GPIO pin in SysCon block */
-	Chip_SYSCTL_SetPinInterrupt(7, PIN_INT);
-
-	/* Configure GPIO pin as input pin */
-	Chip_GPIO_SetPinDIRInput(LPC_GPIO_PORT, 0, PIN_INT);
-
-	/* Configure channel 7 interrupt as edge sensitive and falling edge interrupt */
-	Chip_PININT_SetPinModeEdge(LPC_PININT, PININTCH7);
-	Chip_PININT_EnableIntLow(LPC_PININT, PININTCH7);
-
-	Chip_GPIO_SetPinDIROutput(LPC_GPIO_PORT, 0, PIN_LED);
+	setup_pin_for_interrupt(PIN_INT, 7);
+	setup_pin_for_interrupt(PIN_INT, 6);
 
 	/* Enable interrupt in the NVIC */
+	NVIC_EnableIRQ(PININT6_IRQn);
 	NVIC_EnableIRQ(PININT7_IRQn);
+
 
 
 	//
@@ -223,37 +286,11 @@ int main(void) {
 	uint32_t clock_hz = Chip_Clock_GetSystemClockRate();
 
 
-	hw_i2c_setup();
+	hw_i2c_setup(LPC_I2C0);
+	hw_i2c_setup(LPC_I2C1);
 
-	// Reset
-	hw_i2c_register_write(0x9, 1<<6);
-	hw_i2c_register_write(0x9, 1<<6);
-
-	// Interrupt Enable 1 Register. Set PPG_RDY_EN (data available in FIFO)
-	hw_i2c_register_write(0x2, 1<<6);
-
-	// FIFO configuration register
-	// SMP_AVE: 16 samples averaged per FIFO sample
-	// FIFO_ROLLOVER_EN=1
-	//hw_i2c_register_write(0x8,  1<<4);
-	hw_i2c_register_write(0x8, (0<<5) | 1<<4);
-
-	// Mode Configuration Register
-	// SPO2 mode
-	hw_i2c_register_write(0x9, 3);
-
-	// SPO2 Configuration Register
-	hw_i2c_register_write(0xa,
-			(3<<5)  // SPO2_ADC_RGE 2 = full scale 8192 nA (LSB size 31.25pA); 3 = 16384nA
-			| (1<<2) // sample rate: 0 = 50sps; 1 = 100sps; 2 = 200sps
-			| (3<<0) // LED_PW 3 = 411µs, ADC resolution 18 bits
-	);
-
-	// LED1 (red) power (0 = 0mA; 255 = 50mA)
-	hw_i2c_register_write(0xc, 0xb0);
-
-	// LED (IR) power
-	hw_i2c_register_write(0xd, 0xa0);
+	setup_max30102(LPC_I2C0);
+	//setup_max30102(LPC_I2C1);
 
 	uint8_t v0,v1,v2;
 	uint8_t fifo_read_ptr =  hw_i2c_register_read(0x6);

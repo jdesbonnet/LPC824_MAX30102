@@ -16,25 +16,31 @@
  * Enable I2C. LPC824 has one fast (1Mbps) I2C on fixed pins (I2C0) and 3 others which
  * can be assigned to any GPIO pin, but limited to 400kbps max.
  */
-void hw_i2c_setup (void) {
+void hw_i2c_setup (LPC_I2C_T *i2c) {
 
-	// Enable I2C0 fixed location pins
+	// Enable I2C0 fixed location pins and second I2C1 on movable pins.
 	Chip_Clock_EnablePeriphClock(SYSCTL_CLOCK_SWM);
+
+	// I2C0 (fast fixed I2C) for first sensor
 	Chip_SWM_EnableFixedPin(SWM_FIXED_I2C0_SCL);
 	Chip_SWM_EnableFixedPin(SWM_FIXED_I2C0_SDA);
+
+	// I2C1 for second sensor
+	Chip_SWM_MovablePinAssign(SWM_I2C1_SCL_IO, 8);
+	Chip_SWM_MovablePinAssign(SWM_I2C1_SCL_IO, 9);
+
 	Chip_Clock_DisablePeriphClock(SYSCTL_CLOCK_SWM);
 
 	// Enable I2C clock and reset I2C peripheral
-	Chip_I2C_Init(LPC_I2C);
-
+	Chip_I2C_Init(i2c);
 	// Setup clock rate for I2C
-	Chip_I2C_SetClockDiv(LPC_I2C, I2C_CLK_DIVIDER);
+	Chip_I2C_SetClockDiv(i2c, I2C_CLK_DIVIDER);
 
 	/* Setup I2CM transfer rate */
-	Chip_I2CM_SetBusSpeed(LPC_I2C, I2C_BITRATE);
+	Chip_I2CM_SetBusSpeed(i2c, I2C_BITRATE);
 
 	/* Enable Master Mode */
-	Chip_I2CM_Enable(LPC_I2C);
+	Chip_I2CM_Enable(i2c);
 
 }
 
@@ -77,7 +83,7 @@ int hw_i2c_fifo_read(uint8_t *buf, int len) {
 
 	Chip_I2CM_XferBlocking(LPC_I2C, &i2cmXferRec);
 }
-void hw_i2c_register_write(int reg_addr, int value) {
+void hw_i2c_register_write(LPC_I2C_T *i2c, int reg_addr, int value) {
 
 	I2CM_XFER_T  i2cmXferRec;
 
@@ -93,7 +99,7 @@ void hw_i2c_register_write(int reg_addr, int value) {
 	i2cmXferRec.txBuff = &sendData[0];
 	i2cmXferRec.rxBuff = &recvData[0];
 
-	Chip_I2CM_XferBlocking(LPC_I2C, &i2cmXferRec);
+	Chip_I2CM_XferBlocking(i2c, &i2cmXferRec);
 
 	i2c_delay();
 
