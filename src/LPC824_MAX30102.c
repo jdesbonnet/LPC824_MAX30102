@@ -203,7 +203,7 @@ setup_max30102 (LPC_I2C_T *i2c) {
 }
 
 /**
- * @brief	Handle interrupt from PININT7
+ * @brief	Handle interrupt from PININT6
  * @return	Nothing
  */
 void PININT6_IRQHandler(void)
@@ -238,16 +238,26 @@ int main(void) {
 
     int i;
 
+	// Enable I2C0 fixed location pins and second I2C1 on movable pins.
+	Chip_Clock_EnablePeriphClock(SYSCTL_CLOCK_SWM);
+
+	// I2C0 (fast fixed I2C) for first sensor
+	Chip_SWM_EnableFixedPin(SWM_FIXED_I2C0_SCL);
+	Chip_SWM_EnableFixedPin(SWM_FIXED_I2C0_SDA);
+
+	// I2C1 for second sensor
+	Chip_SWM_MovablePinAssign(SWM_I2C1_SCL_IO, PIN_I2C1_SCL);
+	Chip_SWM_MovablePinAssign(SWM_I2C1_SDA_IO, PIN_I2C1_SDA);
+
+	Chip_Clock_DisablePeriphClock(SYSCTL_CLOCK_SWM);
+
+
     //
     // Initialize GPIO
     //
 	Chip_GPIO_Init(LPC_GPIO_PORT);
 
 	// Configure interrupt pins
-
-	Chip_GPIO_SetPinDIRInput(LPC_GPIO_PORT, 0, PIN_INT);
-	Chip_IOCON_PinSetMode(LPC_IOCON,PIN_INT,PIN_MODE_PULLUP);
-
 	setup_pin_for_interrupt(PIN_INT, 7);
 	setup_pin_for_interrupt(PIN_INT, 6);
 
@@ -290,11 +300,10 @@ int main(void) {
 	hw_i2c_setup(LPC_I2C1);
 
 	setup_max30102(LPC_I2C0);
-	//setup_max30102(LPC_I2C1);
+	setup_max30102(LPC_I2C1);
 
 	uint8_t v0,v1,v2;
-	uint8_t fifo_read_ptr =  hw_i2c_register_read(0x6);
-	uint8_t fifo_write_ptr;
+
 	uint8_t intreg;
 	uint8_t pulse=0;
 	uint8_t led_on=0;
@@ -317,6 +326,12 @@ int main(void) {
 
 	uint8_t buf[6];
 
+	uint8_t fifo_read_ptr =  hw_i2c_register_read(LPC_I2C0, 0x6);
+	uint8_t fifo_write_ptr;
+
+	uint8_t fifo_read_ptr1 =  hw_i2c_register_read(LPC_I2C1, 0x6);
+	uint8_t fifo_write_ptr1;
+
 	// Note about datarates: LPC824 I2C0 can operate up to 1Mpbs, Other I2C
 	// interfaces are limited to 400kbps. Each sample requires 2 register
 	// reads and 6 bytes of sample data. 64bits x 100sps = 6.4kbps
@@ -329,17 +344,17 @@ int main(void) {
     	data_available_flag = 0;
 
     	// Read interrupt register
-    	intreg = hw_i2c_register_read(0x0);
+    	intreg = hw_i2c_register_read(LPC_I2C0,0x0);
 
     	// Get FIFO write pointer
-    	fifo_write_ptr = hw_i2c_register_read(0x4);
+    	fifo_write_ptr = hw_i2c_register_read(LPC_I2C0, 0x4);
 
     	if (fifo_write_ptr != last_fifo_write_ptr) {
 
     		// Clock from SCT counter
     		ts = LPC_SCT->COUNT_U;
 
-    		hw_i2c_fifo_read(buf,6);
+    		hw_i2c_fifo_read(LPC_I2C0, buf,6);
     		v_red = (buf[0]<<16) | (buf[1]<<8) | buf[2];
     		v_ir = (buf[3]<<16) | (buf[4]<<8) | buf[5];
 

@@ -18,19 +18,6 @@
  */
 void hw_i2c_setup (LPC_I2C_T *i2c) {
 
-	// Enable I2C0 fixed location pins and second I2C1 on movable pins.
-	Chip_Clock_EnablePeriphClock(SYSCTL_CLOCK_SWM);
-
-	// I2C0 (fast fixed I2C) for first sensor
-	Chip_SWM_EnableFixedPin(SWM_FIXED_I2C0_SCL);
-	Chip_SWM_EnableFixedPin(SWM_FIXED_I2C0_SDA);
-
-	// I2C1 for second sensor
-	Chip_SWM_MovablePinAssign(SWM_I2C1_SCL_IO, 8);
-	Chip_SWM_MovablePinAssign(SWM_I2C1_SCL_IO, 9);
-
-	Chip_Clock_DisablePeriphClock(SYSCTL_CLOCK_SWM);
-
 	// Enable I2C clock and reset I2C peripheral
 	Chip_I2C_Init(i2c);
 	// Setup clock rate for I2C
@@ -46,7 +33,7 @@ void hw_i2c_setup (LPC_I2C_T *i2c) {
 
 
 
-int hw_i2c_register_read(int reg_addr) {
+int hw_i2c_register_read(LPC_I2C_T *i2c, int reg_addr) {
 
 	I2CM_XFER_T  i2cmXferRec;
 
@@ -62,12 +49,12 @@ int hw_i2c_register_read(int reg_addr) {
 	i2cmXferRec.txBuff = &sendData[0];
 	i2cmXferRec.rxBuff = &recvData[0];
 
-	Chip_I2CM_XferBlocking(LPC_I2C, &i2cmXferRec);
+	Chip_I2CM_XferBlocking(i2c, &i2cmXferRec);
 
 	return recvData[0];
 }
 
-int hw_i2c_fifo_read(uint8_t *buf, int len) {
+int hw_i2c_fifo_read(LPC_I2C_T *i2c, uint8_t *buf, int len) {
 
 	I2CM_XFER_T  i2cmXferRec;
 
@@ -81,7 +68,7 @@ int hw_i2c_fifo_read(uint8_t *buf, int len) {
 	i2cmXferRec.txBuff = &sendData[0];
 	i2cmXferRec.rxBuff = buf;
 
-	Chip_I2CM_XferBlocking(LPC_I2C, &i2cmXferRec);
+	Chip_I2CM_XferBlocking(i2c, &i2cmXferRec);
 }
 void hw_i2c_register_write(LPC_I2C_T *i2c, int reg_addr, int value) {
 
