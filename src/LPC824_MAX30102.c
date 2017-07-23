@@ -51,7 +51,9 @@
 /* 100kbps I2C bit-rate */
 #define I2C_BITRATE             (100000)
 
-static volatile uint8_t data_available_flag=0;
+// Data available flags for both I2C devices (set in ISR).
+static volatile uint8_t data_available_flag[2] = {0,0};
+static volatile uint32_t data_timestamp[2] = {0,0};
 
 #define FILTER_TAP_NUM 73
 
@@ -208,7 +210,10 @@ setup_max30102 (LPC_I2C_T *i2c) {
  */
 void PININT6_IRQHandler(void)
 {
-	data_available_flag=2;
+
+	// Clock from SCT counter
+	data_timestamp[1] = LPC_SCT->COUNT_U;
+	data_available_flag[1]=1;
 	Chip_PININT_ClearIntStatus(LPC_PININT, PININTCH6);
 }
 
@@ -218,8 +223,29 @@ void PININT6_IRQHandler(void)
  */
 void PININT7_IRQHandler(void)
 {
-	data_available_flag=1;
+	// Clock from SCT counter
+	data_timestamp[0] = LPC_SCT->COUNT_U;
+	data_available_flag[0]=1;
 	Chip_PININT_ClearIntStatus(LPC_PININT, PININTCH7);
+}
+
+void retrieve_sample (LPC_I2C_T *i2c_bus, int32_t *fifo_write_ptr, int32_t *last_fifo_write_ptr, int32_t *red, int32_t *nir) {
+
+	// Clear interrupt register by reading it
+	uint8_t intreg = hw_i2c_register_read(i2c_bus,0x0);
+
+	// Get FIFO write pointer
+	*fifo_write_ptr = hw_i2c_register_read(i2c_bus, 0x4);
+
+	uint8_t buf[6];
+
+	if (fifo_write_ptr != last_fifo_write_ptr) {
+		// Clock from SCT counter
+		//ts = LPC_SCT->COUNT_U;
+		hw_i2c_fifo_read(i2c_bus, buf,6);
+		*red = (buf[0]<<16) | (buf[1]<<8) | buf[2];
+		*nir = (buf[3]<<16) | (buf[4]<<8) | buf[5];
+	}
 }
 
 int main(void) {
@@ -302,35 +328,30 @@ int main(void) {
 	setup_max30102(LPC_I2C0);
 	setup_max30102(LPC_I2C1);
 
-	uint8_t v0,v1,v2;
-
-	uint8_t intreg;
-	uint8_t pulse=0;
-	uint8_t led_on=0;
-	uint8_t last_fifo_write_ptr=0;
-
 	uint32_t v_red,v_ir;
-	uint32_t ts, prev_ts=0;
-
-	uint32_t last_zero_crossing_time =  LPC_SCT->COUNT_U;
-	uint32_t pulse_period=30000000;
-	uint32_t pulse_bpm=60;
-
-	int32_t lpf_red=0, lpf_ir=0;
-
-	int32_t a_red[FILTER_TAP_NUM], a_ir[FILTER_TAP_NUM];
-	int32_t sum_red, sum_ir, prev_sum_red, prev_sum_ir;
 
 	uint32_t sample_counter=0;
 	uint32_t led_off_time;
 
 	uint8_t buf[6];
 
-	uint8_t fifo_read_ptr =  hw_i2c_register_read(LPC_I2C0, 0x6);
-	uint8_t fifo_write_ptr;
+	uint8_t fifo_read_ptr[2];
+	uint8_t fifo_write_ptr[2];
 
-	uint8_t fifo_read_ptr1 =  hw_i2c_register_read(LPC_I2C1, 0x6);
-	uint8_t fifo_write_ptr1;
+	uint32_t device_index;
+	LPC_I2C_T *device;
+
+	LPC_I2C_T *device_i2c_bus[2];
+	device_i2c_bus[0] = LPC_I2C0;
+	device_i2c_bus[1] = LPC_I2C1;
+
+	fifo_read_ptr[0] =  hw_i2c_register_read(LPC_I2C0, 0x6);
+	fifo_read_ptr[1] =  hw_i2c_register_read(LPC_I2C1, 0x6);
+
+	uint8_t last_fifo_write_ptr[2]={0,0};
+
+	uint8_t intreg;
+
 
 	// Note about datarates: LPC824 I2C0 can operate up to 1Mpbs, Other I2C
 	// interfaces are limited to 400kbps. Each sample requires 2 register
@@ -338,115 +359,57 @@ int main(void) {
     while(1) {
 
     	// Wait for data-available interrupt
-    	while (!data_available_flag) {
+    	while (data_available_flag[0]==0 && data_available_flag[1]==0) {
     		__WFI();
     	}
-    	data_available_flag = 0;
+
+    	if (data_available_flag[0] != 0) {
+    		device_index=0;
+    	} else {
+    		device_index=1;
+    	}
+
+    	data_available_flag[device_index] = 0;
+    	device = device_i2c_bus[device_index];
 
     	// Read interrupt register
-    	intreg = hw_i2c_register_read(LPC_I2C0,0x0);
+    	intreg = hw_i2c_register_read(device,0x0);
 
     	// Get FIFO write pointer
-    	fifo_write_ptr = hw_i2c_register_read(LPC_I2C0, 0x4);
+    	fifo_write_ptr[device_index] = hw_i2c_register_read(device, 0x4);
 
-    	if (fifo_write_ptr != last_fifo_write_ptr) {
+    	if (fifo_write_ptr[device_index] != last_fifo_write_ptr[device_index]) {
 
-    		// Clock from SCT counter
-    		ts = LPC_SCT->COUNT_U;
 
-    		hw_i2c_fifo_read(LPC_I2C0, buf,6);
+    		hw_i2c_fifo_read(device, buf,6);
     		v_red = (buf[0]<<16) | (buf[1]<<8) | buf[2];
     		v_ir = (buf[3]<<16) | (buf[4]<<8) | buf[5];
 
-    		lpf_red = (v_red + 15*lpf_red)/16;
-    		lpf_ir = (v_ir + 15*lpf_ir)/16;
-
-            for (i = 1; i < FILTER_TAP_NUM; i++) {
-                    a_red[i-1] = a_red[i];
-                    a_ir[i-1] = a_ir[i];
-            }
-            a_red[FILTER_TAP_NUM-1] = v_red - lpf_red;
-            a_ir[FILTER_TAP_NUM-1] = v_ir - lpf_ir;
-
-            sum_red = 0;
-            sum_ir = 0;
-            for (i = 0; i < FILTER_TAP_NUM; i++) {
-                    sum_red += a_red[i]*filter_taps[i];
-                    sum_ir += a_ir[i]*filter_taps[i];
-            }
-
-            // Look for positive to negative crossing. Positive to negative
-            // has greater first derivative (ie saw tooth wave form)
-            if ((prev_sum_ir) > 0 && (sum_ir < 0) ) {
-            	// Second test: was last pulse older than pulse_period/2 ?
-            	if ( (ts - last_zero_crossing_time) > (pulse_period/2) ) {
-            		pulse = 1;
-            		int new_pulse_period = ts - last_zero_crossing_time;
-            		if ( (new_pulse_period < 2*clock_hz) && (new_pulse_period > (clock_hz/4))) {
-            			pulse_period = new_pulse_period;
-                		pulse_bpm = (60*clock_hz)/pulse_period;
-                		led_on = 1;
-                		led_off_time = ts + 1000000;
-                		Chip_GPIO_SetPinState(LPC_GPIO_PORT,0,PIN_LED,true);
-            		}
-            		last_zero_crossing_time = ts;
-            	}
-            }
-
-            prev_sum_red = sum_red;
-            prev_sum_ir = sum_ir;
-
             // output format:
             // timestamp (us)
+    		// device
             // red
             // nir
-            // red (ac)
-            // ir (ac)
-            // sum_red
-            // sum_nir
-            // pulse_period
-            // pulse
+
 
             // Timestamp in microseconds (timer clocked by 30MHz clock).
-    		print_decimal_uint32(ts/30);
-
+    		print_decimal_uint32(data_timestamp[device_index]/30);
+    		print_byte(' ');
+    		print_decimal(device_index);
     		print_byte(' ');
     		print_decimal(v_red);
     		print_byte(' ');
     		print_decimal(v_ir);
 
-    		print_byte(' ');
-    		print_decimal(v_red - lpf_red);
-    		print_byte(' ');
-    		print_decimal(v_ir - lpf_ir);
-
-    		print_byte(' ');
-    		print_decimal(sum_red);
-
-    		print_byte(' ');
-    		print_decimal(sum_ir);
-
-    		print_byte(' ');
-    		print_decimal(pulse_period/30000);
-
-    		print_byte(' ');
-    		print_decimal(pulse);
-
     		print_byte('\r');
     		print_byte('\n');
-    		fifo_read_ptr++;
-    		prev_ts = ts;
-    		last_fifo_write_ptr = fifo_write_ptr;
+
+    		fifo_read_ptr[device_index]++;
+    		last_fifo_write_ptr[device_index] = fifo_write_ptr[device_index];
 
     		sample_counter++;
-    		pulse=0;
-
     	}
 
-    	if (led_on && ts > led_off_time) {
-    		led_on = 0;
-    		Chip_GPIO_SetPinState(LPC_GPIO_PORT,0,PIN_LED,false);
-    	}
     }
     return 0 ;
 }
