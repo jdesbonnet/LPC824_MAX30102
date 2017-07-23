@@ -7,6 +7,12 @@ Test run (finger on sensor for about 7 seconds):
 ![test run chart](./doc/run1.png)
 
 =======
+
+## 23 July 2017, version 0.1
+
+* Support two MAX30102 sensors. Since the sensor has a fixed address they cannout share
+the same I2C bus. Using I2C0 and I2C1. Up to 4 sensors can be supported this way.
+
 Status: work in progress.
 
 A simple UART interface to MAX30102 SPO2 sensor mounted on a breakout board (part GY-MAX30102) using NXP LPC824 MCU. 
