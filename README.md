@@ -12,6 +12,8 @@ Test run (finger on sensor for about 7 seconds):
 
 * Support two MAX30102 sensors. Since the sensor has a fixed address they cannout share
 the same I2C bus. Using I2C0 and I2C1. Up to 4 sensors can be supported this way.
+* Known issue: can hang in an infinite loop while waiting for I2C (presumably due to 
+bus error). Need to timeout I2C reads or implement watchdog timer to reset.
 
 Status: work in progress.
 
