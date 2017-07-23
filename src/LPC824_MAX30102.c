@@ -328,7 +328,10 @@ int main(void) {
 	setup_max30102(LPC_I2C0);
 	setup_max30102(LPC_I2C1);
 
-	uint32_t v_red,v_ir;
+	uint32_t v_red,v_nir;
+
+	int32_t lpf_red[2] = {0,0};
+	int32_t lpf_nir[2] = {0,0};
 
 	uint32_t sample_counter=0;
 	uint32_t led_off_time;
@@ -380,10 +383,13 @@ int main(void) {
 
     	if (fifo_write_ptr[device_index] != last_fifo_write_ptr[device_index]) {
 
-
     		hw_i2c_fifo_read(device, buf,6);
+
     		v_red = (buf[0]<<16) | (buf[1]<<8) | buf[2];
-    		v_ir = (buf[3]<<16) | (buf[4]<<8) | buf[5];
+    		v_nir = (buf[3]<<16) | (buf[4]<<8) | buf[5];
+
+    		lpf_red[device_index] = (v_red + 15*lpf_red[device_index])/16;
+    		lpf_nir[device_index] = (v_nir + 15*lpf_nir[device_index])/16;
 
             // output format:
             // timestamp (us)
@@ -399,7 +405,14 @@ int main(void) {
     		print_byte(' ');
     		print_decimal(v_red);
     		print_byte(' ');
-    		print_decimal(v_ir);
+    		print_decimal(v_nir);
+
+
+    		print_byte(' ');
+    		print_decimal(v_red - lpf_red[device_index]);
+    		print_byte(' ');
+    		print_decimal(v_nir - lpf_nir[device_index]);
+
 
     		print_byte('\r');
     		print_byte('\n');
