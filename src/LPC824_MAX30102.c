@@ -24,7 +24,8 @@
 // Hardware configuration
 //
 //#define UART_BAUD_RATE 115200
-#define UART_BAUD_RATE 230400
+//#define UART_BAUD_RATE 230400
+#define UART_BAUD_RATE 460800
 
 // Define function to pin mapping. Pin numbers here refer to PIO0_n
 // and is not the same as a package pin number.
@@ -169,7 +170,15 @@ void setup_sct_for_timer (void) {
 	Chip_SCT_ClearControl(LPC_SCT, SCT_CTRL_HALT_L | SCT_CTRL_HALT_H);
 }
 
-setup_max30102 (LPC_I2C_T *i2c_bus) {
+/**
+ * Configure MAX30102 by writing to registers.
+ *
+ * @param sample_rate 0 = 50sps, 1=100sps, 2=200sps.
+ */
+setup_max30102 (LPC_I2C_T *i2c_bus, int sample_rate) {
+
+	// Constrain sample_rate to 0..3
+	sample_rate &= 0x3;
 
 	// Reset
 	hw_i2c_register_write(i2c_bus, 0x9, 1<<6);
@@ -185,13 +194,20 @@ setup_max30102 (LPC_I2C_T *i2c_bus) {
 	hw_i2c_register_write(i2c_bus, 0x8, (0<<5) | 1<<4);
 
 	// Mode Configuration Register
-	// SPO2 mode
+	// bit 7: SHDN
+	// bit 6: RESET
+	// bit 0:2: MODE: 2: HR (red only), 3: SPO2 (red+nir), 7: multi-led mode (red+nir)
 	hw_i2c_register_write(i2c_bus, 0x9, 3);
 
 	// SPO2 Configuration Register
+	// bit 7: n/a
+	// bit 5:6: SPO2_ADC_RGE[1:0] (full scale is 0: 2048nA, 1: 4096, 2: 8192nA, 3: 16384nA)
+	// bit 2:4: SPO2_SR[2:0]: sample rate (0: 50, 1: 100, 2: 200, 3: 400, 4: 800... 7:3200)
+	// bit 0:1: LED_PW[1:0]: pulse width (0: 69us, 1: 118us, 2:215us, 3:411us)
+	// 18bits resolution only available with LED_PW=3
 	hw_i2c_register_write(i2c_bus, 0xa,
 			(3<<5)  // SPO2_ADC_RGE 2 = full scale 8192 nA (LSB size 31.25pA); 3 = 16384nA
-			| (1<<2) // sample rate: 0 = 50sps; 1 = 100sps; 2 = 200sps
+			| (sample_rate<<2) // sample rate: 0 = 50sps; 1 = 100sps; 2 = 200sps
 			| (3<<0) // LED_PW 3 = 411µs, ADC resolution 18 bits
 	);
 
@@ -225,6 +241,13 @@ void PININT7_IRQHandler(void)
 	data_timestamp[0] = LPC_SCT->COUNT_U;
 	data_available_flag[0]=1;
 	Chip_PININT_ClearIntStatus(LPC_PININT, PININTCH7);
+}
+
+void WDT_IRQHandler (void) {
+	print_byte('#');
+	print_byte('W');
+	print_byte('\r');
+	print_byte('\n');
 }
 
 
@@ -292,19 +315,42 @@ int main(void) {
 	Chip_UART_TXEnable(LPC_USART0);
 	Chip_UART_Enable(LPC_USART0);
 
+	// Use SCT for hi-res timer.
+	setup_sct_for_timer();
+
+
+	//
+	// Enable watchdog timer
+	//
+
+	// Power to WDT
+	LPC_SYSCON->PDRUNCFG &= ~(0x1<<6);
+	// Setup watchdog oscillator frequency
+	// FREQSEL (bits 8:5) = 0x1 : 0.6MHz  +/- 40%
+	// DIVSEL (bits 4:0) = 0x1F : divide by 64
+	// Watchdog timer: ~ 10kHz
+    LPC_SYSCON->WDTOSCCTRL = (0x1<<5) |0x1F;
+    LPC_WWDT->TC = 4000;
+    LPC_WWDT->MOD = (1<<0) // WDEN enable watchdog
+    			| (1<<1); // WDRESET : enable watchdog to reset on timeout
+    // Watchdog feed sequence
+    LPC_WWDT->FEED = 0xAA;
+    LPC_WWDT->FEED = 0x55;
+    NVIC_EnableIRQ( (IRQn_Type) WDT_IRQn);
+
+
 	//
 	// Initialize GPIO
 	//
 	//Chip_GPIO_Init(LPC_GPIO_PORT);
-	setup_sct_for_timer();
 	uint32_t clock_hz = Chip_Clock_GetSystemClockRate();
 
 
 	hw_i2c_setup(LPC_I2C0);
 	hw_i2c_setup(LPC_I2C1);
 
-	setup_max30102(LPC_I2C0);
-	setup_max30102(LPC_I2C1);
+	setup_max30102(LPC_I2C0,1);
+	setup_max30102(LPC_I2C1,1);
 
 	uint32_t v_red,v_nir;
 
@@ -331,13 +377,44 @@ int main(void) {
 
 	uint8_t last_fifo_write_ptr[2]={0,0};
 
-	uint8_t intreg;
+	int intreg;
+	char c;
 
+	print_byte('#');
+	print_byte('S');
+	print_byte('\r');
+	print_byte('\n');
+
+	// What sensor hardware revision?
+	print_byte('#');
+	print_byte('V');
+	print_decimal (hw_i2c_register_read(device_i2c_bus[0],0xfe));
+	print_byte(' ');
+	print_decimal (hw_i2c_register_read(device_i2c_bus[1],0xfe));
+	print_byte('\r');
+	print_byte('\n');
 
 	// Note about datarates: LPC824 I2C0 can operate up to 1Mpbs, Other I2C
 	// interfaces are limited to 400kbps. Each sample requires 2 register
 	// reads and 6 bytes of sample data. 64bits x 100sps = 6.4kbps
     while(1) {
+
+        // Watchdog feed sequence
+        LPC_WWDT->FEED = 0xAA;
+        LPC_WWDT->FEED = 0x55;
+
+    	// UART simple commands. Single char. "0".."2" set sample speeds 50sps,100sps,200sps.2
+    	if (LPC_USART0->STAT & 1) {
+    		c = LPC_USART0->RXDATA;
+    		if (c >= '0' && c <= '2') {
+    			setup_max30102(LPC_I2C0, c - '0');
+    			setup_max30102(LPC_I2C1, c - '0');
+    			print_byte('#');
+    			print_byte('\r');
+    			print_byte('\n');
+    		}
+    	}
+
 
     	// Wait for data-available interrupt
     	while (data_available_flag[0]==0 && data_available_flag[1]==0) {
