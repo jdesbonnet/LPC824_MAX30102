@@ -34,13 +34,11 @@
 // General purpose debug pin
 #define PIN_DEBUG 14
 
-#define PIN_INT 13
+// Interrupt pins for the two sensors
 #define PIN_INT0 13
-#define PIN_INT1 13
+#define PIN_INT1 1
 
-
-#define PIN_I2C_SCL 10
-#define PIN_I2C_SDA 13
+// I2C bus pins for the two sensors
 #define PIN_I2C0_SCL 10
 #define PIN_I2C0_SDA 13
 #define PIN_I2C1_SCL 8
@@ -171,37 +169,37 @@ void setup_sct_for_timer (void) {
 	Chip_SCT_ClearControl(LPC_SCT, SCT_CTRL_HALT_L | SCT_CTRL_HALT_H);
 }
 
-setup_max30102 (LPC_I2C_T *i2c) {
+setup_max30102 (LPC_I2C_T *i2c_bus) {
 
 	// Reset
-	hw_i2c_register_write(i2c, 0x9, 1<<6);
-	hw_i2c_register_write(i2c, 0x9, 1<<6);
+	hw_i2c_register_write(i2c_bus, 0x9, 1<<6);
+	hw_i2c_register_write(i2c_bus, 0x9, 1<<6);
 
 	// Interrupt Enable 1 Register. Set PPG_RDY_EN (data available in FIFO)
-	hw_i2c_register_write(i2c, 0x2, 1<<6);
+	hw_i2c_register_write(i2c_bus, 0x2, 1<<6);
 
 	// FIFO configuration register
 	// SMP_AVE: 16 samples averaged per FIFO sample
 	// FIFO_ROLLOVER_EN=1
 	//hw_i2c_register_write(0x8,  1<<4);
-	hw_i2c_register_write(i2c, 0x8, (0<<5) | 1<<4);
+	hw_i2c_register_write(i2c_bus, 0x8, (0<<5) | 1<<4);
 
 	// Mode Configuration Register
 	// SPO2 mode
-	hw_i2c_register_write(i2c, 0x9, 3);
+	hw_i2c_register_write(i2c_bus, 0x9, 3);
 
 	// SPO2 Configuration Register
-	hw_i2c_register_write(i2c, 0xa,
+	hw_i2c_register_write(i2c_bus, 0xa,
 			(3<<5)  // SPO2_ADC_RGE 2 = full scale 8192 nA (LSB size 31.25pA); 3 = 16384nA
 			| (1<<2) // sample rate: 0 = 50sps; 1 = 100sps; 2 = 200sps
 			| (3<<0) // LED_PW 3 = 411µs, ADC resolution 18 bits
 	);
 
 	// LED1 (red) power (0 = 0mA; 255 = 50mA)
-	hw_i2c_register_write(i2c, 0xc, 0xb0);
+	hw_i2c_register_write(i2c_bus, 0xc, 0xb0);
 
 	// LED (IR) power
-	hw_i2c_register_write(i2c, 0xd, 0xa0);
+	hw_i2c_register_write(i2c_bus, 0xd, 0xa0);
 }
 
 /**
@@ -229,24 +227,6 @@ void PININT7_IRQHandler(void)
 	Chip_PININT_ClearIntStatus(LPC_PININT, PININTCH7);
 }
 
-void retrieve_sample (LPC_I2C_T *i2c_bus, int32_t *fifo_write_ptr, int32_t *last_fifo_write_ptr, int32_t *red, int32_t *nir) {
-
-	// Clear interrupt register by reading it
-	uint8_t intreg = hw_i2c_register_read(i2c_bus,0x0);
-
-	// Get FIFO write pointer
-	*fifo_write_ptr = hw_i2c_register_read(i2c_bus, 0x4);
-
-	uint8_t buf[6];
-
-	if (fifo_write_ptr != last_fifo_write_ptr) {
-		// Clock from SCT counter
-		//ts = LPC_SCT->COUNT_U;
-		hw_i2c_fifo_read(i2c_bus, buf,6);
-		*red = (buf[0]<<16) | (buf[1]<<8) | buf[2];
-		*nir = (buf[3]<<16) | (buf[4]<<8) | buf[5];
-	}
-}
 
 int main(void) {
 
@@ -261,8 +241,6 @@ int main(void) {
     Board_LED_Set(0, true);
 #endif
 #endif
-
-    int i;
 
 	// Enable I2C0 fixed location pins and second I2C1 on movable pins.
 	Chip_Clock_EnablePeriphClock(SYSCTL_CLOCK_SWM);
@@ -284,8 +262,8 @@ int main(void) {
 	Chip_GPIO_Init(LPC_GPIO_PORT);
 
 	// Configure interrupt pins
-	setup_pin_for_interrupt(PIN_INT, 7);
-	setup_pin_for_interrupt(PIN_INT, 6);
+	setup_pin_for_interrupt(PIN_INT0, 7);
+	setup_pin_for_interrupt(PIN_INT1, 6);
 
 	/* Enable interrupt in the NVIC */
 	NVIC_EnableIRQ(PININT6_IRQn);
