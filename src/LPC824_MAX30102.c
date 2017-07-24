@@ -9,6 +9,8 @@
 ===============================================================================
 */
 
+#define VERSION "0.2.0"
+
 #if defined (__USE_LPCOPEN)
 #if defined(NO_BOARD_LIB)
 #include "chip.h"
@@ -32,6 +34,8 @@
 //#define UART_BAUD_RATE 115200
 //#define UART_BAUD_RATE 230400
 #define UART_BAUD_RATE 460800
+
+#define EOL "\r\n"
 
 // Define function to pin mapping. Pin numbers here refer to PIO0_n
 // and is not the same as a package pin number.
@@ -179,7 +183,7 @@ void PININT7_IRQHandler(void)
 
 void WDT_IRQHandler (void) {
 
-	tfp_printf("#W\n");
+	tfp_printf("#W%s",EOL);
 
 	// Wait until all data sent on wire
 	while ( ! (LPC_USART0->STAT & (1<<3)) );
@@ -253,7 +257,6 @@ int main(void) {
 	Chip_UART_Enable(LPC_USART0);
 
 	init_printf(NULL,myputc);
-	tfp_printf("Testing123...\n");
 
 	// Use SCT for hi-res timer.
 	setup_sct_for_timer();
@@ -272,7 +275,7 @@ int main(void) {
 	// DIVSEL (bits 4:0) = 0x1F : divide by 64
 	// Watchdog timer: ~ 10kHz
     LPC_SYSCON->WDTOSCCTRL = (0x1<<5) |0x1F;
-    LPC_WWDT->TC = 8000;
+    LPC_WWDT->TC = 4000;
     LPC_WWDT->MOD = (1<<0) // WDEN enable watchdog
     			| (1<<1); // WDRESET : enable watchdog to reset on timeout
     // Watchdog feed sequence
@@ -314,6 +317,8 @@ int main(void) {
 	int32_t temperature[NSENSOR];
 
 	uint32_t device_index;
+	uint32_t checksum;
+
 	LPC_I2C_T *device;
 
 	LPC_I2C_T *device_i2c_bus[NSENSOR] = {LPC_I2C0, LPC_I2C1};
@@ -330,15 +335,15 @@ int main(void) {
 	char c;
 
 	// System booting and version
-	tfp_printf("#S\n");
+	tfp_printf("#S %s%s",VERSION,EOL);
 
 
 	// What sensor hardware revision?
-	tfp_printf("#V\n");
+	tfp_printf("#V%s",EOL);
 	for (i = 0; i < NSENSOR; i++) {
 		tfp_printf(" %d",hw_i2c_register_read(device_i2c_bus[i],0xfe));
 	}
-	tfp_printf("\n");
+	tfp_printf(EOL);
 
 	// Note about datarates: LPC824 I2C0 can operate up to 1Mpbs, Other I2C
 	// interfaces are limited to 400kbps. Each sample requires 2 register
@@ -359,7 +364,7 @@ int main(void) {
     		{
     			setup_max30102(LPC_I2C0, c - '0');
     			setup_max30102(LPC_I2C1, c - '0');
-    			tfp_printf("#%c\n",c);
+    			tfp_printf("#%cEOL",c,EOL);
     			break;
     		}
     		case 'T':
@@ -423,14 +428,15 @@ int main(void) {
             // nir
 
 
+    		tfp_printf("$PPGV0 ");
             // Timestamp in microseconds (timer clocked by 30MHz clock).
-    		tfp_printf("%d %d %d %d", data_timestamp[device_index]/30, device_index, v_red, v_nir);
+    		tfp_printf("%x %x %x %x", device_index, v_red, v_nir, (data_timestamp[device_index]/30)&0xffffff);
 
     		if (output_ac_col) {
     			tfp_printf(" %d %d", v_red - lpf_red[device_index], v_nir - lpf_nir[device_index]);
     		}
 
-    		tfp_printf("\n");
+    		tfp_printf(" *%x%s", (v_red+v_nir)&0xff, EOL);
 
     		fifo_read_ptr[device_index]++;
     		last_fifo_write_ptr[device_index] = fifo_write_ptr[device_index];
@@ -456,7 +462,7 @@ int main(void) {
     			for (i = 0; i < NSENSOR; i++) {
     				tfp_printf(" %d", temperature[i]);
     			}
-    			tfp_printf("\n");
+    			tfp_printf(EOL);
     		}
     		sample_counter++;
     	}
