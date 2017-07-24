@@ -23,6 +23,11 @@
 //
 // Hardware configuration
 //
+
+// Number of sensors
+#define NSENSOR 2
+
+
 //#define UART_BAUD_RATE 115200
 //#define UART_BAUD_RATE 230400
 #define UART_BAUD_RATE 460800
@@ -246,8 +251,12 @@ void PININT7_IRQHandler(void)
 void WDT_IRQHandler (void) {
 	print_byte('#');
 	print_byte('W');
-	print_byte('\r');
 	print_byte('\n');
+
+	// Wait until all data sent on wire
+	while ( ! (LPC_USART0->STAT & (1<<3)) );
+
+	NVIC_SystemReset();
 }
 
 
@@ -323,6 +332,8 @@ int main(void) {
 	// Enable watchdog timer
 	//
 
+    LPC_SYSCON->SYSAHBCLKCTRL |= (1<<17);
+
 	// Power to WDT
 	LPC_SYSCON->PDRUNCFG &= ~(0x1<<6);
 	// Setup watchdog oscillator frequency
@@ -330,7 +341,7 @@ int main(void) {
 	// DIVSEL (bits 4:0) = 0x1F : divide by 64
 	// Watchdog timer: ~ 10kHz
     LPC_SYSCON->WDTOSCCTRL = (0x1<<5) |0x1F;
-    LPC_WWDT->TC = 4000;
+    LPC_WWDT->TC = 8000;
     LPC_WWDT->MOD = (1<<0) // WDEN enable watchdog
     			| (1<<1); // WDRESET : enable watchdog to reset on timeout
     // Watchdog feed sequence
@@ -354,44 +365,50 @@ int main(void) {
 
 	uint32_t v_red,v_nir;
 
-	int32_t lpf_red[2] = {0,0};
-	int32_t lpf_nir[2] = {0,0};
+	int32_t lpf_red[NSENSOR] = {0,0};
+	int32_t lpf_nir[NSENSOR] = {0,0};
+
+	// Subtract DC component and output as extra column
+	uint8_t output_ac_col = 0;
+
+	// Include hi-res timestamp in output
+	uint8_t output_hires_time = 0;
 
 	uint32_t sample_counter=0;
-	uint32_t led_off_time;
 
 	uint8_t buf[6];
 
-	uint8_t fifo_read_ptr[2];
-	uint8_t fifo_write_ptr[2];
+	uint8_t fifo_read_ptr[NSENSOR];
+	uint8_t fifo_write_ptr[NSENSOR];
+	int32_t temperature[NSENSOR];
 
 	uint32_t device_index;
 	LPC_I2C_T *device;
 
-	LPC_I2C_T *device_i2c_bus[2];
-	device_i2c_bus[0] = LPC_I2C0;
-	device_i2c_bus[1] = LPC_I2C1;
+	LPC_I2C_T *device_i2c_bus[NSENSOR] = {LPC_I2C0, LPC_I2C1};
 
-	fifo_read_ptr[0] =  hw_i2c_register_read(LPC_I2C0, 0x6);
-	fifo_read_ptr[1] =  hw_i2c_register_read(LPC_I2C1, 0x6);
+	int i;
 
-	uint8_t last_fifo_write_ptr[2]={0,0};
+	for (i = 0; i < NSENSOR; i++) {
+		fifo_read_ptr[i] =  hw_i2c_register_read(device_i2c_bus[i], 0x6);
+	}
+
+	uint8_t last_fifo_write_ptr[NSENSOR]={0,0};
 
 	int intreg;
 	char c;
 
 	print_byte('#');
 	print_byte('S');
-	print_byte('\r');
 	print_byte('\n');
 
 	// What sensor hardware revision?
 	print_byte('#');
 	print_byte('V');
-	print_decimal (hw_i2c_register_read(device_i2c_bus[0],0xfe));
-	print_byte(' ');
-	print_decimal (hw_i2c_register_read(device_i2c_bus[1],0xfe));
-	print_byte('\r');
+	for (i = 0; i < NSENSOR; i++) {
+		print_byte(' ');
+		print_decimal (hw_i2c_register_read(device_i2c_bus[i],0xfe));
+	}
 	print_byte('\n');
 
 	// Note about datarates: LPC824 I2C0 can operate up to 1Mpbs, Other I2C
@@ -406,12 +423,38 @@ int main(void) {
     	// UART simple commands. Single char. "0".."2" set sample speeds 50sps,100sps,200sps.2
     	if (LPC_USART0->STAT & 1) {
     		c = LPC_USART0->RXDATA;
-    		if (c >= '0' && c <= '2') {
+    		switch (c) {
+    		case '0':
+    		case '1':
+    		case '2':
+    		{
     			setup_max30102(LPC_I2C0, c - '0');
     			setup_max30102(LPC_I2C1, c - '0');
     			print_byte('#');
-    			print_byte('\r');
+    			print_byte(c);
     			print_byte('\n');
+    			break;
+    		}
+    		case 'T':
+    		{
+    			output_hires_time = 1;
+    			break;
+    		}
+    		case 't':
+    		{
+    			output_hires_time = 0;
+    			break;
+    		}
+    		case 'A':
+    		{
+    			output_ac_col = 1;
+    			break;
+    		}
+    		case 'a':
+    		{
+    			output_ac_col = 0;
+    			break;
+    		}
     		}
     	}
 
@@ -462,19 +505,43 @@ int main(void) {
     		print_byte(' ');
     		print_decimal(v_nir);
 
+    		if (output_ac_col) {
+    			print_byte(' ');
+    			print_decimal(v_red - lpf_red[device_index]);
+    			print_byte(' ');
+    			print_decimal(v_nir - lpf_nir[device_index]);
+    		}
 
-    		print_byte(' ');
-    		print_decimal(v_red - lpf_red[device_index]);
-    		print_byte(' ');
-    		print_decimal(v_nir - lpf_nir[device_index]);
-
-
-    		print_byte('\r');
     		print_byte('\n');
 
     		fifo_read_ptr[device_index]++;
     		last_fifo_write_ptr[device_index] = fifo_write_ptr[device_index];
 
+    		// Periodically query die temperature (required for SPO2 calculations)
+    		if (sample_counter % 4096 == 0) {
+    			for (i = 0; i < NSENSOR; i++) {
+    				temperature[i] = -1;
+        			hw_i2c_register_write(device_i2c_bus[i],0x21,1);
+    			}
+    			int tcount = 0;
+    			while (tcount < NSENSOR) {
+    				for (i = 0; i < NSENSOR; i++) {
+    					if (temperature[i]==-1 && hw_i2c_register_read(device_i2c_bus[i],0x21)==0) {
+    						temperature[i] = hw_i2c_register_read(device_i2c_bus[i],0x1f) << 4
+    								| hw_i2c_register_read(device_i2c_bus[i],0x20);
+    						tcount++;
+    					}
+    				}
+    			}
+
+    			print_byte('#');
+    			print_byte('T');
+    			for (i = 0; i < NSENSOR; i++) {
+    				print_byte(' ');
+    				print_decimal(temperature[i]);
+    			}
+    			print_byte('\n');
+    		}
     		sample_counter++;
     	}
 
