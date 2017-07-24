@@ -19,6 +19,7 @@
 
 #include <cr_section_macros.h>
 
+#include "printf.h"
 
 //
 // Hardware configuration
@@ -63,82 +64,10 @@ static volatile uint32_t data_timestamp[2] = {0,0};
 
 extern int filter_taps[FILTER_TAP_NUM];
 
-/**
- * @brief Send one byte to UART. Block if UART busy.
- * @param n Byte to send to UART.
- * @return None.
- */
-static void print_byte (uint8_t n) {
-	//Chip_UART_SendBlocking(LPC_USART0, &n, 1);
 
-	// Wait until data can be written to FIFO (TXRDY==1)
-	while ( (Chip_UART_GetStatus(LPC_USART0) & UART_STAT_TXRDY) == 0) {}
-
-	Chip_UART_SendByte(LPC_USART0, n);
-}
-
-/**
- * @brief Print a signed integer in decimal radix.
- * @param n Number to print.
- * @return None.
- */
-static void print_decimal (int n) {
-	char buf[10];
-	int i = 0;
-
-	// Special case of n==0
-	if (n == 0) {
-		print_byte('0');
-		return;
-	}
-
-	// Handle negative numbers
-	if (n < 0) {
-		print_byte('-');
-		n = -n;
-	}
-
-	// Use modulo 10 to get least significant digit.
-	// Then /10 to shift digits right and get next least significant digit.
-	while (n > 0) {
-		buf[i++] = '0' + n%10;
-		n /= 10;
-	}
-
-	// Output digits in reverse order
-	do {
-		print_byte (buf[--i]);
-	} while (i>0);
-
-}
-
-/**
- * @brief Print uint32 integer in decimal radix.
- * @param n Number to print.
- * @return None.
- */
-static void print_decimal_uint32 (uint32_t n) {
-	char buf[10];
-	int i = 0;
-
-	// Special case of n==0
-	if (n == 0) {
-		print_byte('0');
-		return;
-	}
-
-	// Use modulo 10 to get least significant digit.
-	// Then /10 to shift digits right and get next least significant digit.
-	while (n > 0) {
-		buf[i++] = '0' + n%10;
-		n /= 10;
-	}
-
-	// Output digits in reverse order
-	do {
-		print_byte (buf[--i]);
-	} while (i>0);
-
+// To facilitate tfp_printf()
+void myputc (void *p, char c) {
+	Chip_UART_SendBlocking(LPC_USART0, &c, 1);
 }
 
 void setup_pin_for_interrupt (int interrupt_pin, int interrupt_channel) {
@@ -249,9 +178,8 @@ void PININT7_IRQHandler(void)
 }
 
 void WDT_IRQHandler (void) {
-	print_byte('#');
-	print_byte('W');
-	print_byte('\n');
+
+	tfp_printf("#W\n");
 
 	// Wait until all data sent on wire
 	while ( ! (LPC_USART0->STAT & (1<<3)) );
@@ -323,6 +251,9 @@ int main(void) {
 	Chip_UART_SetBaud(LPC_USART0, UART_BAUD_RATE);
 	Chip_UART_TXEnable(LPC_USART0);
 	Chip_UART_Enable(LPC_USART0);
+
+	init_printf(NULL,myputc);
+	tfp_printf("Testing123...\n");
 
 	// Use SCT for hi-res timer.
 	setup_sct_for_timer();
@@ -398,18 +329,16 @@ int main(void) {
 	int intreg;
 	char c;
 
-	print_byte('#');
-	print_byte('S');
-	print_byte('\n');
+	// System booting and version
+	tfp_printf("#S\n");
+
 
 	// What sensor hardware revision?
-	print_byte('#');
-	print_byte('V');
+	tfp_printf("#V\n");
 	for (i = 0; i < NSENSOR; i++) {
-		print_byte(' ');
-		print_decimal (hw_i2c_register_read(device_i2c_bus[i],0xfe));
+		tfp_printf(" %d",hw_i2c_register_read(device_i2c_bus[i],0xfe));
 	}
-	print_byte('\n');
+	tfp_printf("\n");
 
 	// Note about datarates: LPC824 I2C0 can operate up to 1Mpbs, Other I2C
 	// interfaces are limited to 400kbps. Each sample requires 2 register
@@ -430,9 +359,7 @@ int main(void) {
     		{
     			setup_max30102(LPC_I2C0, c - '0');
     			setup_max30102(LPC_I2C1, c - '0');
-    			print_byte('#');
-    			print_byte(c);
-    			print_byte('\n');
+    			tfp_printf("#%c\n",c);
     			break;
     		}
     		case 'T':
@@ -497,22 +424,13 @@ int main(void) {
 
 
             // Timestamp in microseconds (timer clocked by 30MHz clock).
-    		print_decimal_uint32(data_timestamp[device_index]/30);
-    		print_byte(' ');
-    		print_decimal(device_index);
-    		print_byte(' ');
-    		print_decimal(v_red);
-    		print_byte(' ');
-    		print_decimal(v_nir);
+    		tfp_printf("%d %d %d %d", data_timestamp[device_index]/30, device_index, v_red, v_nir);
 
     		if (output_ac_col) {
-    			print_byte(' ');
-    			print_decimal(v_red - lpf_red[device_index]);
-    			print_byte(' ');
-    			print_decimal(v_nir - lpf_nir[device_index]);
+    			tfp_printf(" %d %d", v_red - lpf_red[device_index], v_nir - lpf_nir[device_index]);
     		}
 
-    		print_byte('\n');
+    		tfp_printf("\n");
 
     		fifo_read_ptr[device_index]++;
     		last_fifo_write_ptr[device_index] = fifo_write_ptr[device_index];
@@ -534,13 +452,11 @@ int main(void) {
     				}
     			}
 
-    			print_byte('#');
-    			print_byte('T');
+    			tfp_printf("#T");
     			for (i = 0; i < NSENSOR; i++) {
-    				print_byte(' ');
-    				print_decimal(temperature[i]);
+    				tfp_printf(" %d", temperature[i]);
     			}
-    			print_byte('\n');
+    			tfp_printf("\n");
     		}
     		sample_counter++;
     	}
