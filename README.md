@@ -1,6 +1,7 @@
 # LPC824_MAX30102
 
-A simple UART interface to MAX30102 SPO2 sensor mounted on a breakout board (part GY-MAX30102) using NXP LPC824 MCU.
+A simple UART interface to one or more MAX30102 SPO2 sensor mounted on a breakout board 
+(part GY-MAX30102) using NXP LPC824 MCU.
 
 Test PPG (photoplethysmogram) measured with MAX30102 optical sensor on thumb.
 
@@ -8,18 +9,31 @@ Test PPG (photoplethysmogram) measured with MAX30102 optical sensor on thumb.
 
 =======
 
+## 25 July 2017, version 0.2.0
+
+* More compact output record format with record identifier "$PPG" at start. 
+Use of hex for data compaction (binary a step too far for the moment).
+
+Over night recording stopped prematurely due (it seems) to cheap USB/UART
+cable spontaneously disconnecting. 
+
+## 24 July 2017, version 0.1.1
+* Watch dog timer to recover from I2C bus errors. This is sub-optimum.
+
 ## 23 July 2017, version 0.1
 
-* Support two MAX30102 sensors. Since the sensor has a fixed address they cannout share
+* Support two MAX30102 sensors. Since the sensor has a fixed address they cannot share
 the same I2C bus. Using I2C0 and I2C1. Up to 4 sensors can be supported this way.
 * Known issue: can hang in an infinite loop while waiting for I2C (presumably due to 
 bus error). Need to timeout I2C reads or implement watchdog timer to reset.
+* Known issue: long sensor leads and high UART baud rate (460800bps) causing data
+corruption in a significant number or records: use lower I2C bus clock and perhaps
+run two I2C transfer in parallel. Also use shorter message format on UART and 
+lower bit rate.
+* Over night run with two MAX30102 sensors (thumb + toe) resulted in some good and
+interesting data, but some work required to clean up due to above data corruption
+issue.
 
-Status: work in progress.
-
-A simple UART interface to MAX30102 SPO2 sensor mounted on a breakout board (part GY-MAX30102) using NXP LPC824 MCU. 
-
-The Maxim MAX30102 sensor uses 1.8V for digital logic and 3.1 - 5.25V for LED drive. To use with 3.3V/5V MCUs or dev boards like Arduino, a linear regulator is needed for MAX30102 sensor supply rails and level convertors for I2C SDA/CLK lines.
 
 ## GY-MAX30102
 

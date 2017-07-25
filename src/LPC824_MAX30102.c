@@ -32,8 +32,8 @@
 
 
 //#define UART_BAUD_RATE 115200
-//#define UART_BAUD_RATE 230400
-#define UART_BAUD_RATE 460800
+#define UART_BAUD_RATE 230400
+//#define UART_BAUD_RATE 460800
 
 #define EOL "\r\n"
 
@@ -294,8 +294,8 @@ int main(void) {
 	hw_i2c_setup(LPC_I2C0);
 	hw_i2c_setup(LPC_I2C1);
 
-	setup_max30102(LPC_I2C0,1);
-	setup_max30102(LPC_I2C1,1);
+	setup_max30102(LPC_I2C0,2);
+	setup_max30102(LPC_I2C1,2);
 
 	uint32_t v_red,v_nir;
 
