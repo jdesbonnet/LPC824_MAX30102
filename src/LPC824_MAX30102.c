@@ -339,11 +339,13 @@ int main(void) {
 
 
 	// What sensor hardware revision?
-	tfp_printf("#V%s",EOL);
+	/*
+	tfp_printf("#V");
 	for (i = 0; i < NSENSOR; i++) {
 		tfp_printf(" %d",hw_i2c_register_read(device_i2c_bus[i],0xfe));
 	}
 	tfp_printf(EOL);
+	*/
 
 	// Note about datarates: LPC824 I2C0 can operate up to 1Mpbs, Other I2C
 	// interfaces are limited to 400kbps. Each sample requires 2 register
