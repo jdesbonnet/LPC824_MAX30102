@@ -5,9 +5,7 @@ A simple UART interface to one or more MAX30102 SPO2 sensor mounted on a breakou
 
 Test PPG (photoplethysmogram) measured with MAX30102 optical sensor on thumb.
 
-![test run chart](./doc/run1.png)
-
-=======
+![overnight test run](https://github.com/jdesbonnet/PPG_Tools/blob/master/doc/sleep.png)
 
 ## 25 July 2017, version 0.2.0
 
