@@ -9,7 +9,7 @@
 ===============================================================================
 */
 
-#define VERSION "0.2.0"
+#define VERSION "0.2.1"
 
 #if defined (__USE_LPCOPEN)
 #if defined(NO_BOARD_LIB)
@@ -118,7 +118,7 @@ setup_max30102 (LPC_I2C_T *i2c_bus, int sample_rate) {
 	// Constrain sample_rate to 0..3
 	sample_rate &= 0x3;
 
-	// Reset
+	// Reset MAX30102
 	hw_i2c_register_write(i2c_bus, 0x9, 1<<6);
 	hw_i2c_register_write(i2c_bus, 0x9, 1<<6);
 
@@ -225,11 +225,11 @@ int main(void) {
     //
 	Chip_GPIO_Init(LPC_GPIO_PORT);
 
-	// Configure interrupt pins
+	// Configure pin to receive interrupts from MAX30102
 	setup_pin_for_interrupt(PIN_INT0, 7);
 	setup_pin_for_interrupt(PIN_INT1, 6);
 
-	/* Enable interrupt in the NVIC */
+	// Enable interrupts in the NVIC
 	NVIC_EnableIRQ(PININT6_IRQn);
 	NVIC_EnableIRQ(PININT7_IRQn);
 
@@ -258,7 +258,9 @@ int main(void) {
 
 	init_printf(NULL,myputc);
 
+	//
 	// Use SCT for hi-res timer.
+	//
 	setup_sct_for_timer();
 
 
@@ -398,25 +400,54 @@ int main(void) {
     		__WFI();
     	}
 
-    	if (data_available_flag[0] != 0) {
-    		device_index=0;
-    	} else {
-    		device_index=1;
-    	}
+    	// From which sensor (if any) did interrupt originate?
+    	device_index = -1;
+		for (i = 0; i < NSENSOR; i++) {
+			if (data_available_flag[i]!=0) {
+				device_index = i;
+				data_available_flag[i] = 0;
+				break;
+			}
+		}
 
-    	data_available_flag[device_index] = 0;
+		// It's possible interrupt was unrelated to sensor
+		if (device_index == -1) {
+			continue;
+		}
+
+    	// Which I2C bus to use?
     	device = device_i2c_bus[device_index];
 
-    	// Read interrupt register
+    	//
+    	// TODO: use of Chip_I2CM_XferBlocking() support library function is
+    	// proving very problematic. There is no timeout in the event of bus
+    	// error. So currently relying on WDT to resume data. But this
+    	// results in significant gaps in the data stream. Either need to
+    	// hack Chip_I2CM_XferBlocking() to timeout quickly or implement
+    	// a non-blocking I2C read.
+    	//
+
+    	// Read MAX30102 interrupt register to clear interrupt
+    	// TODO: is this actually necessary? Datasheet says either reading the
+    	// interrupt register OR reading from FIFO will clear the PPG_RDY
+    	// interrupt.
     	intreg = hw_i2c_register_read(device,0x0);
 
     	// Get FIFO write pointer
+    	// TODO: is this actually necessary? I think the interrupt will remain
+    	// asserted until all the data is read. So read one sample now, and if
+    	// there is more in the buffer then it will be picked up on the next
+    	// iteration of the loop. Normally would not expect ever to have more
+    	// than one sample in the buffer.
     	fifo_write_ptr[device_index] = hw_i2c_register_read(device, 0x4);
 
     	if (fifo_write_ptr[device_index] != last_fifo_write_ptr[device_index]) {
 
-    		hw_i2c_fifo_read(device, buf,6);
+    		// Output header asap to reduce time lag
+    		tfp_printf("$PPGV0 ");
 
+    		// Read sample from MAX30102
+    		hw_i2c_fifo_read(device, buf,6);
     		v_red = (buf[0]<<16) | (buf[1]<<8) | buf[2];
     		v_nir = (buf[3]<<16) | (buf[4]<<8) | buf[5];
 
@@ -430,7 +461,6 @@ int main(void) {
             // nir
 
 
-    		tfp_printf("$PPGV0 ");
             // Timestamp in microseconds (timer clocked by 30MHz clock).
     		tfp_printf("%x %x %x %x", device_index, v_red, v_nir, (data_timestamp[device_index]/30)&0xffffff);
 
