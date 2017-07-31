@@ -427,11 +427,6 @@ int main(void) {
     	// a non-blocking I2C read.
     	//
 
-    	// Read MAX30102 interrupt register to clear interrupt
-    	// TODO: is this actually necessary? Datasheet says either reading the
-    	// interrupt register OR reading from FIFO will clear the PPG_RDY
-    	// interrupt.
-    	intreg = hw_i2c_register_read(device,0x0);
 
     	// Get FIFO write pointer
     	// TODO: is this actually necessary? I think the interrupt will remain
@@ -439,65 +434,66 @@ int main(void) {
     	// there is more in the buffer then it will be picked up on the next
     	// iteration of the loop. Normally would not expect ever to have more
     	// than one sample in the buffer.
-    	fifo_write_ptr[device_index] = hw_i2c_register_read(device, 0x4);
+    	//fifo_write_ptr[device_index] = hw_i2c_register_read(device, 0x4);
 
-    	if (fifo_write_ptr[device_index] != last_fifo_write_ptr[device_index]) {
+		// Output header asap to reduce time lag
+		tfp_printf("$PPGV0 ");
 
-    		// Output header asap to reduce time lag
-    		tfp_printf("$PPGV0 ");
+		// Read sample from MAX30102
+		hw_i2c_fifo_read(device, buf, 6);
+		v_red = (buf[0] << 16) | (buf[1] << 8) | buf[2];
+		v_nir = (buf[3] << 16) | (buf[4] << 8) | buf[5];
 
-    		// Read sample from MAX30102
-    		hw_i2c_fifo_read(device, buf,6);
-    		v_red = (buf[0]<<16) | (buf[1]<<8) | buf[2];
-    		v_nir = (buf[3]<<16) | (buf[4]<<8) | buf[5];
+		lpf_red[device_index] = (v_red + 15 * lpf_red[device_index]) / 16;
+		lpf_nir[device_index] = (v_nir + 15 * lpf_nir[device_index]) / 16;
 
-    		lpf_red[device_index] = (v_red + 15*lpf_red[device_index])/16;
-    		lpf_nir[device_index] = (v_nir + 15*lpf_nir[device_index])/16;
+		// output format:
+		// timestamp (us)
+		// device
+		// red
+		// nir
 
-            // output format:
-            // timestamp (us)
-    		// device
-            // red
-            // nir
+		// Timestamp in microseconds (timer clocked by 30MHz clock).
+		tfp_printf("%x %x %x %x", device_index, v_red, v_nir,
+				(data_timestamp[device_index] / 30) & 0xffffff);
 
+		if (output_ac_col) {
+			tfp_printf(" %d %d", v_red - lpf_red[device_index],
+					v_nir - lpf_nir[device_index]);
+		}
 
-            // Timestamp in microseconds (timer clocked by 30MHz clock).
-    		tfp_printf("%x %x %x %x", device_index, v_red, v_nir, (data_timestamp[device_index]/30)&0xffffff);
+		tfp_printf(" *%x%s", (v_red + v_nir) & 0xff, EOL);
 
-    		if (output_ac_col) {
-    			tfp_printf(" %d %d", v_red - lpf_red[device_index], v_nir - lpf_nir[device_index]);
-    		}
+		fifo_read_ptr[device_index]++;
+		last_fifo_write_ptr[device_index] = fifo_write_ptr[device_index];
 
-    		tfp_printf(" *%x%s", (v_red+v_nir)&0xff, EOL);
+		// Periodically query die temperature (required for SPO2 calculations)
+		if (sample_counter % 4096 == 0) {
+			for (i = 0; i < NSENSOR; i++) {
+				temperature[i] = -1;
+				hw_i2c_register_write(device_i2c_bus[i], 0x21, 1);
+			}
+			int tcount = 0;
+			while (tcount < NSENSOR) {
+				for (i = 0; i < NSENSOR; i++) {
+					if (temperature[i] == -1
+							&& hw_i2c_register_read(device_i2c_bus[i], 0x21)
+									== 0) {
+						temperature[i] = hw_i2c_register_read(device_i2c_bus[i],
+								0x1f) << 4
+								| hw_i2c_register_read(device_i2c_bus[i], 0x20);
+						tcount++;
+					}
+				}
+			}
 
-    		fifo_read_ptr[device_index]++;
-    		last_fifo_write_ptr[device_index] = fifo_write_ptr[device_index];
-
-    		// Periodically query die temperature (required for SPO2 calculations)
-    		if (sample_counter % 4096 == 0) {
-    			for (i = 0; i < NSENSOR; i++) {
-    				temperature[i] = -1;
-        			hw_i2c_register_write(device_i2c_bus[i],0x21,1);
-    			}
-    			int tcount = 0;
-    			while (tcount < NSENSOR) {
-    				for (i = 0; i < NSENSOR; i++) {
-    					if (temperature[i]==-1 && hw_i2c_register_read(device_i2c_bus[i],0x21)==0) {
-    						temperature[i] = hw_i2c_register_read(device_i2c_bus[i],0x1f) << 4
-    								| hw_i2c_register_read(device_i2c_bus[i],0x20);
-    						tcount++;
-    					}
-    				}
-    			}
-
-    			tfp_printf("#T");
-    			for (i = 0; i < NSENSOR; i++) {
-    				tfp_printf(" %d", temperature[i]);
-    			}
-    			tfp_printf(EOL);
-    		}
-    		sample_counter++;
-    	}
+			tfp_printf("#T");
+			for (i = 0; i < NSENSOR; i++) {
+				tfp_printf(" %d", temperature[i]);
+			}
+			tfp_printf(EOL);
+		}
+		sample_counter++;
 
     }
     return 0 ;
