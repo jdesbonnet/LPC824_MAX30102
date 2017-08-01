@@ -125,6 +125,10 @@ setup_max30102 (LPC_I2C_T *i2c_bus, int sample_rate) {
 	// Interrupt Enable 1 Register. Set PPG_RDY_EN (data available in FIFO)
 	hw_i2c_register_write(i2c_bus, 0x2, 1<<6);
 
+	// Enable die temperature interrupt by writing DIE_TEMP_RDY_EN=1
+	//hw_i2c_register_write(i2c_bus, 0x03, 1<<1);
+
+
 	// FIFO configuration register
 	// SMP_AVE: 16 samples averaged per FIFO sample
 	// FIFO_ROLLOVER_EN=1
@@ -467,21 +471,42 @@ int main(void) {
 		fifo_read_ptr[device_index]++;
 		last_fifo_write_ptr[device_index] = fifo_write_ptr[device_index];
 
+		// Are all sensors functioning? Getting dropoff on sensor 1 for some reason!
+		for (i = 0; i < NSENSOR; i++) {
+			// Check for timeout condition and reset
+			if ( (LPC_SCT->COUNT_U - data_timestamp[i]) > 3000000) {
+				tfp_printf("#R%d%s",i,EOL);
+				setup_max30102(device_i2c_bus[i],2);
+			}
+		}
+
 		// Periodically query die temperature (required for SPO2 calculations)
 		if (sample_counter % 4096 == 0) {
 			for (i = 0; i < NSENSOR; i++) {
 				temperature[i] = -1;
+				// Start temperature measurement by writing TEMP_EN=1
 				hw_i2c_register_write(device_i2c_bus[i], 0x21, 1);
+
+				// Enable die temperature interrupt by writing DIE_TEMP_RDY_EN=1
+				//hw_i2c_register_write(device_i2c_bus[i], 0x03, 1<<1);
 			}
+
+
+			// Wait until we get NSENSOR temperature readings
 			int tcount = 0;
 			while (tcount < NSENSOR) {
+
+				// Avoid excessive polling by waiting for an interrupt.
+				//__WFI();
+
 				for (i = 0; i < NSENSOR; i++) {
-					if (temperature[i] == -1
-							&& hw_i2c_register_read(device_i2c_bus[i], 0x21)
-									== 0) {
-						temperature[i] = hw_i2c_register_read(device_i2c_bus[i],
-								0x1f) << 4
+					// If no temperature received for this sensor, read TEMP_EN.
+					// Will clear when temperature is read to be read.
+					if ( (temperature[i] == -1) && (hw_i2c_register_read(device_i2c_bus[i], 0x21) == 0) ) {
+						temperature[i] = hw_i2c_register_read(device_i2c_bus[i], 0x1f) << 4
 								| hw_i2c_register_read(device_i2c_bus[i], 0x20);
+						// Clear DIE_TEMP_DRY interrupt
+						//hw_i2c_register_read(device_i2c_bus[i], 0x03);
 						tcount++;
 					}
 				}
