@@ -3,11 +3,7 @@
 A simple UART interface to one or more MAX30102 SPO2 sensor mounted on a breakout board 
 (part GY-MAX30102) using NXP LPC824 MCU.
 
-Test PPG (photoplethysmogram) measured with MAX30102 optical sensor on thumb.
-
-![test run chart](./doc/run1.png)
-
-=======
+![overnight test run](https://github.com/jdesbonnet/PPG_Tools/blob/master/doc/sleep.png)
 
 ## 31 July 2017, version 0.2.1
 
