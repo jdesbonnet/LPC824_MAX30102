@@ -9,6 +9,10 @@ Test PPG (photoplethysmogram) measured with MAX30102 optical sensor on thumb.
 
 =======
 
+## 31 July 2017, version 0.2.1
+
+* Remove unnecessary register reads during sample read cycle.
+
 ## 25 July 2017, version 0.2.0
 
 * More compact output record format with record identifier "$PPG" at start. 
