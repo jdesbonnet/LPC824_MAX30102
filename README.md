@@ -5,6 +5,11 @@ A simple UART interface to one or more MAX30102 SPO2 sensor mounted on a breakou
 
 ![overnight test run](https://github.com/jdesbonnet/PPG_Tools/blob/master/doc/sleep.png)
 
+## 1 Aug 2017, version 2.2.2
+
+* UART command 'M' (32 samples means), 'm' (no means)
+* Continue to have reliablity issues when more than one sensor. Cause not determined yet.
+ 
 ## 31 July 2017, version 0.2.1
 
 * Remove unnecessary register reads during sample read cycle.

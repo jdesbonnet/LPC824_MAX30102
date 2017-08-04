@@ -9,7 +9,7 @@
 ===============================================================================
 */
 
-#define VERSION "0.2.1"
+#define VERSION "0.2.2"
 
 #if defined (__USE_LPCOPEN)
 #if defined(NO_BOARD_LIB)
@@ -28,12 +28,18 @@
 //
 
 // Number of sensors
-#define NSENSOR 2
+#define NSENSOR 1
+
+#define MAX30102_SPEED_50SPS (0)
+#define MAX30102_SPEED_100SPS (1)
+#define MAX30102_SPEED_200SPS (2)
+
+#define DEFAULT_SPEED MAX30102_SPEED_100SPS
 
 
 //#define UART_BAUD_RATE 115200
-#define UART_BAUD_RATE 230400
-//#define UART_BAUD_RATE 460800
+//#define UART_BAUD_RATE 230400
+#define UART_BAUD_RATE 460800
 
 #define EOL "\r\n"
 
@@ -109,11 +115,11 @@ void setup_sct_for_timer (void) {
 }
 
 /**
- * Configure MAX30102 by writing to registers.
+ * Initialize MAX30102 .
  *
  * @param sample_rate 0 = 50sps, 1=100sps, 2=200sps.
  */
-setup_max30102 (LPC_I2C_T *i2c_bus, int sample_rate) {
+max30102_init (LPC_I2C_T *i2c_bus, int sample_rate) {
 
 	// Constrain sample_rate to 0..3
 	sample_rate &= 0x3;
@@ -133,7 +139,10 @@ setup_max30102 (LPC_I2C_T *i2c_bus, int sample_rate) {
 	// SMP_AVE: 16 samples averaged per FIFO sample
 	// FIFO_ROLLOVER_EN=1
 	//hw_i2c_register_write(0x8,  1<<4);
-	hw_i2c_register_write(i2c_bus, 0x8, (0<<5) | 1<<4);
+	hw_i2c_register_write(i2c_bus, 0x8,
+			(0<<5)  // averaging 0:no averaging; 1: av 2 samples; ... 5:av 32 samples
+			| 1<<4  // FIFO roll overmode
+			);
 
 	// Mode Configuration Register
 	// bit 7: SHDN
@@ -159,6 +168,35 @@ setup_max30102 (LPC_I2C_T *i2c_bus, int sample_rate) {
 	// LED (IR) power
 	hw_i2c_register_write(i2c_bus, 0xd, 0xa0);
 }
+
+/**
+ * Set/unset MAX30102 averaging mode.
+ */
+void max30102_mean_samples (LPC_I2C_T *i2c_bus, int m) {
+
+	// limit m to 0..7
+	m &= 0x7;
+
+	hw_i2c_register_write(i2c_bus, 0x8,
+			(m<<5)  // averaging 0:no averaging; 1: av 2 samples; ... 5:av 32 samples
+			| 1<<4  // FIFO roll overmode
+			);
+}
+
+void max30102_set_sps (LPC_I2C_T *i2c_bus, int sample_rate) {
+	// SPO2 Configuration Register
+	// bit 7: n/a
+	// bit 5:6: SPO2_ADC_RGE[1:0] (full scale is 0: 2048nA, 1: 4096, 2: 8192nA, 3: 16384nA)
+	// bit 2:4: SPO2_SR[2:0]: sample rate (0: 50, 1: 100, 2: 200, 3: 400, 4: 800... 7:3200)
+	// bit 0:1: LED_PW[1:0]: pulse width (0: 69us, 1: 118us, 2:215us, 3:411us)
+	// 18bits resolution only available with LED_PW=3
+	hw_i2c_register_write(i2c_bus, 0xa,
+			(3<<5)  // SPO2_ADC_RGE 2 = full scale 8192 nA (LSB size 31.25pA); 3 = 16384nA
+			| (sample_rate<<2) // sample rate: 0 = 50sps; 1 = 100sps; 2 = 200sps
+			| (3<<0) // LED_PW 3 = 411µs, ADC resolution 18 bits
+	);
+}
+
 
 /**
  * @brief	Handle interrupt from PININT6
@@ -296,17 +334,21 @@ int main(void) {
 	//Chip_GPIO_Init(LPC_GPIO_PORT);
 	uint32_t clock_hz = Chip_Clock_GetSystemClockRate();
 
-
-	hw_i2c_setup(LPC_I2C0);
-	hw_i2c_setup(LPC_I2C1);
-
-	setup_max30102(LPC_I2C0,2);
-	setup_max30102(LPC_I2C1,2);
+	//
+	// Setup I2C bus and initialize MAX30102 sensors
+	//
+	LPC_I2C_T *device;
+	LPC_I2C_T *device_i2c_bus[NSENSOR] = {LPC_I2C0, LPC_I2C1};
+	int i;
+	for (i = 0; i < NSENSOR; i++) {
+		hw_i2c_setup(device_i2c_bus[i]);
+		max30102_init(device_i2c_bus[i],DEFAULT_SPEED);
+	}
 
 	uint32_t v_red,v_nir;
 
-	int32_t lpf_red[NSENSOR] = {0,0};
-	int32_t lpf_nir[NSENSOR] = {0,0};
+	int32_t lpf_red[NSENSOR] = {0};
+	int32_t lpf_nir[NSENSOR] = {0};
 
 	// Subtract DC component and output as extra column
 	uint8_t output_ac_col = 0;
@@ -325,11 +367,6 @@ int main(void) {
 	uint32_t device_index;
 	uint32_t checksum;
 
-	LPC_I2C_T *device;
-
-	LPC_I2C_T *device_i2c_bus[NSENSOR] = {LPC_I2C0, LPC_I2C1};
-
-	int i;
 
 	for (i = 0; i < NSENSOR; i++) {
 		fifo_read_ptr[i] =  hw_i2c_register_read(device_i2c_bus[i], 0x6);
@@ -370,8 +407,10 @@ int main(void) {
     		case '1':
     		case '2':
     		{
-    			setup_max30102(LPC_I2C0, c - '0');
-    			setup_max30102(LPC_I2C1, c - '0');
+    			int sps = c - '0';
+    			for (i = 0; i < NSENSOR; i++) {
+    				max30102_set_sps(device_i2c_bus[i], sps);
+    			}
     			tfp_printf("#%cEOL",c,EOL);
     			break;
     		}
@@ -395,6 +434,17 @@ int main(void) {
     			output_ac_col = 0;
     			break;
     		}
+    		case 'M':
+    			for (i = 0; i < NSENSOR; i++) {
+    				max30102_mean_samples(device_i2c_bus[i],5);
+    			}
+    			break;
+    		case 'm':
+    			for (i = 0; i < NSENSOR; i++) {
+    				max30102_mean_samples(device_i2c_bus[i],0);
+    			}
+    			break;
+
     		}
     	}
 
@@ -471,12 +521,15 @@ int main(void) {
 		fifo_read_ptr[device_index]++;
 		last_fifo_write_ptr[device_index] = fifo_write_ptr[device_index];
 
+
+		hw_i2c_register_read(device, 0x0);
+
 		// Are all sensors functioning? Getting dropoff on sensor 1 for some reason!
 		for (i = 0; i < NSENSOR; i++) {
 			// Check for timeout condition and reset
 			if ( (LPC_SCT->COUNT_U - data_timestamp[i]) > 3000000) {
 				tfp_printf("#R%d%s",i,EOL);
-				setup_max30102(device_i2c_bus[i],2);
+				max30102_init(device_i2c_bus[i],DEFAULT_SPEED);
 			}
 		}
 
