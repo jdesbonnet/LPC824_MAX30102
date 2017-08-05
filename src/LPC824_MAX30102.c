@@ -38,8 +38,8 @@
 
 
 //#define UART_BAUD_RATE 115200
-//#define UART_BAUD_RATE 230400
-#define UART_BAUD_RATE 460800
+#define UART_BAUD_RATE 230400
+//#define UART_BAUD_RATE 460800
 
 #define EOL "\r\n"
 
@@ -63,12 +63,17 @@
 
 #define PIN_LED 12
 
+#define ECG_ADC_CH 3
+
 /* 100kbps I2C bit-rate */
 #define I2C_BITRATE             (100000)
 
 // Data available flags for both I2C devices (set in ISR).
 static volatile uint8_t data_available_flag[2] = {0,0};
 static volatile uint32_t data_timestamp[2] = {0,0};
+static volatile uint32_t adc_timestamp = 0;
+static volatile bool adc_seq_complete = false;
+
 
 #define FILTER_TAP_NUM 73
 
@@ -114,12 +119,90 @@ void setup_sct_for_timer (void) {
 	Chip_SCT_ClearControl(LPC_SCT, SCT_CTRL_HALT_L | SCT_CTRL_HALT_H);
 }
 
+void setup_adc (void) {
+
+	/* Setup ADC for 12-bit mode and normal power */
+	Chip_ADC_Init(LPC_ADC, 0);
+
+	/* Need to do a calibration after initialization and trim */
+	Chip_ADC_StartCalibration(LPC_ADC);
+	while (!(Chip_ADC_IsCalibrationDone(LPC_ADC))) {}
+
+	/* Setup for maximum ADC clock rate using sycnchronous clocking */
+	Chip_ADC_SetClockRate(LPC_ADC, ADC_MAX_SAMPLE_RATE/8);
+	Chip_ADC_SetDivider(LPC_ADC, 7);
+
+	/* Setup a sequencer to do the following:
+	   Perform ADC conversion of ADC channels 0 only */
+	Chip_ADC_SetupSequencer(LPC_ADC, ADC_SEQA_IDX,
+							(ADC_SEQ_CTRL_CHANSEL(ECG_ADC_CH)
+									| ADC_SEQ_CTRL_MODE_EOS));
+
+	/* Enable fixed pin ADC3 (package pin 1) */
+	Chip_Clock_EnablePeriphClock(SYSCTL_CLOCK_SWM);
+	Chip_SWM_EnableFixedPin(SWM_FIXED_ADC3);
+	Chip_Clock_DisablePeriphClock(SYSCTL_CLOCK_SWM);
+
+	/* Clear all pending interrupts */
+	Chip_ADC_ClearFlags(LPC_ADC, Chip_ADC_GetFlags(LPC_ADC));
+
+	/* Enable ADC overrun and sequence A completion interrupts */
+	//Chip_ADC_EnableInt(LPC_ADC, (ADC_INTEN_SEQA_ENABLE | ADC_INTEN_OVRRUN_ENABLE));
+	Chip_ADC_EnableInt(LPC_ADC, ADC_INTEN_SEQA_ENABLE);
+
+
+	/* Enable ADC NVIC interrupt */
+	NVIC_EnableIRQ(ADC_SEQA_IRQn);
+
+	/* Enable sequencer */
+	Chip_ADC_EnableSequencer(LPC_ADC, ADC_SEQA_IDX);
+
+}
+
+void setup_wdt () {
+
+    LPC_SYSCON->SYSAHBCLKCTRL |= (1<<17);
+
+	// Power to WDT
+	LPC_SYSCON->PDRUNCFG &= ~(0x1<<6);
+	// Setup watchdog oscillator frequency
+	// FREQSEL (bits 8:5) = 0x1 : 0.6MHz  +/- 40%
+	// DIVSEL (bits 4:0) = 0x1F : divide by 64
+	// Watchdog timer: ~ 10kHz
+    LPC_SYSCON->WDTOSCCTRL = (0x1<<5) |0x1F;
+    LPC_WWDT->TC = 4000;
+    LPC_WWDT->MOD = (1<<0) // WDEN enable watchdog
+    			| (1<<1); // WDRESET : enable watchdog to reset on timeout
+    // Watchdog feed sequence
+    LPC_WWDT->FEED = 0xAA;
+    LPC_WWDT->FEED = 0x55;
+    NVIC_EnableIRQ( (IRQn_Type) WDT_IRQn);
+}
+
+void setup_uart () {
+	// Assign pins: use same assignment as serial bootloader
+	Chip_Clock_EnablePeriphClock(SYSCTL_CLOCK_SWM);
+	Chip_SWM_MovablePinAssign(SWM_U0_TXD_O, PIN_UART_TXD);
+	Chip_SWM_MovablePinAssign(SWM_U0_RXD_I, PIN_UART_RXD);
+	Chip_Clock_DisablePeriphClock(SYSCTL_CLOCK_SWM);
+
+	Chip_UART_Init(LPC_USART0);
+	Chip_UART_ConfigData(LPC_USART0,
+			UART_CFG_DATALEN_8
+			| UART_CFG_PARITY_NONE
+			| UART_CFG_STOPLEN_1);
+
+	Chip_Clock_SetUSARTNBaseClockRate((UART_BAUD_RATE * 16), true);
+	Chip_UART_SetBaud(LPC_USART0, UART_BAUD_RATE);
+	Chip_UART_TXEnable(LPC_USART0);
+	Chip_UART_Enable(LPC_USART0);
+}
 /**
  * Initialize MAX30102 .
  *
  * @param sample_rate 0 = 50sps, 1=100sps, 2=200sps.
  */
-max30102_init (LPC_I2C_T *i2c_bus, int sample_rate) {
+void max30102_init (LPC_I2C_T *i2c_bus, int sample_rate) {
 
 	// Constrain sample_rate to 0..3
 	sample_rate &= 0x3;
@@ -233,6 +316,25 @@ void WDT_IRQHandler (void) {
 	NVIC_SystemReset();
 }
 
+/**
+ * @brief	Handle interrupt from ADC sequencer A
+ * @return	Nothing
+ */
+void ADC_SEQA_IRQHandler(void)
+{
+	adc_timestamp = LPC_SCT->COUNT_U;
+
+	/* Get pending interrupts */
+	uint32_t pending = Chip_ADC_GetFlags(LPC_ADC);
+
+	/* Sequence A completion interrupt */
+	if (pending & ADC_FLAGS_SEQA_INT_MASK) {
+		adc_seq_complete = true;
+	}
+
+	/* Clear any pending interrupts */
+	Chip_ADC_ClearFlags(LPC_ADC, pending);
+}
 
 int main(void) {
 
@@ -276,63 +378,22 @@ int main(void) {
 	NVIC_EnableIRQ(PININT7_IRQn);
 
 
-
-	//
 	// Initialize UART
-	//
-
-	// Assign pins: use same assignment as serial bootloader
-	Chip_Clock_EnablePeriphClock(SYSCTL_CLOCK_SWM);
-	Chip_SWM_MovablePinAssign(SWM_U0_TXD_O, PIN_UART_TXD);
-	Chip_SWM_MovablePinAssign(SWM_U0_RXD_I, PIN_UART_RXD);
-	Chip_Clock_DisablePeriphClock(SYSCTL_CLOCK_SWM);
-
-	Chip_UART_Init(LPC_USART0);
-	Chip_UART_ConfigData(LPC_USART0,
-			UART_CFG_DATALEN_8
-			| UART_CFG_PARITY_NONE
-			| UART_CFG_STOPLEN_1);
-
-	Chip_Clock_SetUSARTNBaseClockRate((UART_BAUD_RATE * 16), true);
-	Chip_UART_SetBaud(LPC_USART0, UART_BAUD_RATE);
-	Chip_UART_TXEnable(LPC_USART0);
-	Chip_UART_Enable(LPC_USART0);
-
+	setup_uart();
 	init_printf(NULL,myputc);
 
-	//
 	// Use SCT for hi-res timer.
-	//
 	setup_sct_for_timer();
 
-
-	//
 	// Enable watchdog timer
-	//
+	//setup_wdt();
 
-    LPC_SYSCON->SYSAHBCLKCTRL |= (1<<17);
-
-	// Power to WDT
-	LPC_SYSCON->PDRUNCFG &= ~(0x1<<6);
-	// Setup watchdog oscillator frequency
-	// FREQSEL (bits 8:5) = 0x1 : 0.6MHz  +/- 40%
-	// DIVSEL (bits 4:0) = 0x1F : divide by 64
-	// Watchdog timer: ~ 10kHz
-    LPC_SYSCON->WDTOSCCTRL = (0x1<<5) |0x1F;
-    LPC_WWDT->TC = 4000;
-    LPC_WWDT->MOD = (1<<0) // WDEN enable watchdog
-    			| (1<<1); // WDRESET : enable watchdog to reset on timeout
-    // Watchdog feed sequence
-    LPC_WWDT->FEED = 0xAA;
-    LPC_WWDT->FEED = 0x55;
-    NVIC_EnableIRQ( (IRQn_Type) WDT_IRQn);
-
-
-	//
 	// Initialize GPIO
-	//
-	//Chip_GPIO_Init(LPC_GPIO_PORT);
+	Chip_GPIO_Init(LPC_GPIO_PORT);
 	uint32_t clock_hz = Chip_Clock_GetSystemClockRate();
+
+	// Initialize ECG ADC
+	setup_adc();
 
 	//
 	// Setup I2C bus and initialize MAX30102 sensors
@@ -368,6 +429,7 @@ int main(void) {
 	uint32_t checksum;
 
 
+	// Get starting value of FIFO pointer
 	for (i = 0; i < NSENSOR; i++) {
 		fifo_read_ptr[i] =  hw_i2c_register_read(device_i2c_bus[i], 0x6);
 	}
@@ -380,15 +442,7 @@ int main(void) {
 	// System booting and version
 	tfp_printf("#S %s%s",VERSION,EOL);
 
-
-	// What sensor hardware revision?
-	/*
-	tfp_printf("#V");
-	for (i = 0; i < NSENSOR; i++) {
-		tfp_printf(" %d",hw_i2c_register_read(device_i2c_bus[i],0xfe));
-	}
-	tfp_printf(EOL);
-	*/
+	Chip_ADC_StartSequencer(LPC_ADC, ADC_SEQA_IDX);
 
 	// Note about datarates: LPC824 I2C0 can operate up to 1Mpbs, Other I2C
 	// interfaces are limited to 400kbps. Each sample requires 2 register
@@ -454,6 +508,22 @@ int main(void) {
     		__WFI();
     	}
 
+    	if (adc_seq_complete) {
+    		/*
+    		tfp_printf("$ECGV0 %x %x | ",adc_timestamp, LPC_ADC->SEQ_GDAT[0]);
+    		for (i = 0; i < 12; i++) {
+    			uint32_t adc_sample = Chip_ADC_GetDataReg(LPC_ADC, i);
+    			adc_sample = (adc_sample>>4)&0x3ff;
+    			tfp_printf(" %x",adc_sample);
+    		}
+    		tfp_printf("%s",EOL);
+    		*/
+    		uint32_t adc_sample = Chip_ADC_GetDataReg(LPC_ADC, ECG_ADC_CH);
+    		adc_sample = (adc_sample>>4)&0x3ff;
+    		tfp_printf("$ECGV0 %x %d%s",(adc_timestamp/30)& 0xffffff, adc_sample, EOL);
+    		adc_seq_complete = 0;
+    	}
+
     	// From which sensor (if any) did interrupt originate?
     	device_index = -1;
 		for (i = 0; i < NSENSOR; i++) {
@@ -467,6 +537,11 @@ int main(void) {
 		// It's possible interrupt was unrelated to sensor
 		if (device_index == -1) {
 			continue;
+		}
+
+		// Sensor A triggers ECG ADC reading
+		if (device_index == 0) {
+    		Chip_ADC_StartSequencer(LPC_ADC, ADC_SEQA_IDX);
 		}
 
     	// Which I2C bus to use?
